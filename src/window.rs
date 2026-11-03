@@ -23,6 +23,8 @@ use crate::themes::{self, Colors};
 use crate::{editor, fonts, menu, prefs, theme, toolbar, wide};
 
 const APP_NAME: &str = "z++";
+/// Resource ID of the icon in build.rs's .rc file.
+const APP_ICON_ID: usize = 1;
 const UNTITLED: &str = "Untitled";
 const PATH_BUF_LEN: usize = 32 * 1024;
 const DEFAULT_WIDTH: i32 = 1100;
@@ -99,7 +101,8 @@ pub unsafe fn run(path: Option<PathBuf>) -> i32 {
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: Some(wndproc),
         hInstance: hinst,
-        hIcon: LoadIconW(null_mut(), IDI_APPLICATION),
+        hIcon: load_icon(hinst, SM_CXICON, SM_CYICON),
+        hIconSm: load_icon(hinst, SM_CXSMICON, SM_CYSMICON),
         hCursor: LoadCursorW(null_mut(), IDC_ARROW),
         lpszClassName: class,
         ..zeroed()
@@ -128,6 +131,18 @@ pub unsafe fn run(path: Option<PathBuf>) -> i32 {
         load(&p);
     }
     message_loop(hwnd)
+}
+
+/// The app icon from the exe's resources (see build.rs), at the system size for that slot.
+unsafe fn load_icon(hinst: HINSTANCE, cx: SYSTEM_METRICS_INDEX, cy: SYSTEM_METRICS_INDEX) -> HICON {
+    LoadImageW(
+        hinst,
+        APP_ICON_ID as *const u16,
+        IMAGE_ICON,
+        GetSystemMetrics(cx),
+        GetSystemMetrics(cy),
+        LR_DEFAULTCOLOR,
+    ) as HICON
 }
 
 unsafe fn load_prefs(windows_fonts: &[&str]) {
