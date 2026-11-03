@@ -4,6 +4,12 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Added
+
+- An app icon, shown in the title bar, taskbar, Start menu and Explorer.
+- Version and publisher details in the exe's Properties > Details.
+- `install.ps1`, a per-user installer: Start menu shortcut, Win+R, "Open with", "Edit with z++", and removal from Settings > Apps. Release zips include it.
+
 ## [0.2.0] - 2026-11-03
 
 ### Added

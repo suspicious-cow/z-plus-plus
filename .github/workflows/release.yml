@@ -46,7 +46,7 @@ jobs:
           cargo build --release --target ${{ matrix.target }}
           $dir = "zpp-${{ github.ref_name }}-${{ matrix.arch }}"
           New-Item -ItemType Directory $dir | Out-Null
-          Copy-Item target/${{ matrix.target }}/release/zpp.exe, LICENSE, NOTICE, README.md $dir
+          Copy-Item target/${{ matrix.target }}/release/zpp.exe, LICENSE, NOTICE, README.md, scripts/install.ps1 $dir
           Copy-Item fonts/licenses $dir/font-licenses -Recurse
           Compress-Archive -Path $dir/* -DestinationPath "$dir.zip"
 

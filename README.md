@@ -1,4 +1,4 @@
-# z++
+# <img src="assets/zpp-256.png" alt="" width="48" align="top"> z++
 
 A small, fast plain text editor for Windows, written in Rust. It runs natively on ARM64 and x64.
 
@@ -23,7 +23,15 @@ The project is early. It edits plain text well, but it is not a code editor: the
 
 ## Download
 
-Get the latest build from the [Releases page](https://github.com/suspicious-cow/z-plus-plus/releases/latest). Pick `arm64` for Windows on Arm or `x64` for Intel and AMD PCs, unzip it, and run `zpp.exe`. There is nothing to install. The exe is not code-signed yet, so Windows SmartScreen may warn the first time you run it.
+Get the latest build from the [Releases page](https://github.com/suspicious-cow/z-plus-plus/releases/latest). Pick `arm64` for Windows on Arm or `x64` for Intel and AMD PCs, unzip it, and run `zpp.exe`. You can run `zpp.exe` straight from the folder, or install it for your user account (no admin rights):
+
+```
+pwsh -File install.ps1
+```
+
+The installer copies z++ to `%LOCALAPPDATA%\Programs\z++` and adds a Start menu shortcut, `zpp` in Win+R, z++ in the "Open with" list for common text files, "Edit with z++" on the right-click menu, and an entry in Settings > Apps for removing it. Windows 11 doesn't let apps make themselves the default, so to open `.txt` files in z++ by default, right-click one, choose Open with > z++ and pick "Always". From a source checkout, run `pwsh -File scripts\install.ps1` after building.
+
+The exe is not code-signed yet, so Windows SmartScreen may warn the first time you run it.
 
 ## Keyboard shortcuts
 
