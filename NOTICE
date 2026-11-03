@@ -1,6 +1,10 @@
 z++
 Copyright 2026 Zain Naboulsi
 
+The text and background colors of 22 themes are taken from the theme files that ship with
+Notepad++ (github.com/notepad-plus-plus/notepad-plus-plus, PowerEditor/installer/themes).
+Only those color values are used; no theme file is included.
+
 This product includes fonts made by others, each under its own license.
 The fonts are in fonts/ and their licenses are in fonts/licenses/.
 Copyright lines below are taken from each font's license file or font metadata.

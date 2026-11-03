@@ -26,37 +26,56 @@ pub const LIGHT: &str = "Light";
 pub const DARK: &str = "Dark";
 pub const CUSTOM: &str = "Custom";
 
+/// A web-style 0xRRGGBB value as a COLORREF.
+pub const fn hex(v: u32) -> u32 {
+    rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
+}
+
+/// Light themes first, then dark ones; Light and Dark lead each group, the rest are alphabetical.
+/// Themes marked "Notepad++" use the default text and background colors from the theme files
+/// that ship with Notepad++ (scripts/import_npp_themes.py reads them).
 pub const PRESETS: &[Preset] = &[
-    preset(LIGHT, rgb(0x00, 0x00, 0x00), rgb(0xFF, 0xFF, 0xFF)),
-    preset(DARK, rgb(0xD4, 0xD4, 0xD4), rgb(0x1E, 0x1E, 0x1E)),
-    preset("Paper", rgb(0x5B, 0x46, 0x36), rgb(0xF4, 0xEC, 0xD8)),
-    preset(
-        "Solarized Light",
-        rgb(0x65, 0x7B, 0x83),
-        rgb(0xFD, 0xF6, 0xE3),
-    ),
-    preset(
-        "Solarized Dark",
-        rgb(0x83, 0x94, 0x96),
-        rgb(0x00, 0x2B, 0x36),
-    ),
-    preset(
-        "Gruvbox Light",
-        rgb(0x3C, 0x38, 0x36),
-        rgb(0xFB, 0xF1, 0xC7),
-    ),
-    preset("Gruvbox Dark", rgb(0xEB, 0xDB, 0xB2), rgb(0x28, 0x28, 0x28)),
-    preset("Nord", rgb(0xD8, 0xDE, 0xE9), rgb(0x2E, 0x34, 0x40)),
-    preset("Dracula", rgb(0xF8, 0xF8, 0xF2), rgb(0x28, 0x2A, 0x36)),
-    preset("One Dark", rgb(0xAB, 0xB2, 0xBF), rgb(0x28, 0x2C, 0x34)),
-    preset("Monokai", rgb(0xF8, 0xF8, 0xF2), rgb(0x27, 0x28, 0x22)),
-    preset("Green Screen", rgb(0x33, 0xFF, 0x66), rgb(0x0C, 0x0C, 0x0C)),
-    preset(
-        "High Contrast",
-        rgb(0xFF, 0xFF, 0xFF),
-        rgb(0x00, 0x00, 0x00),
-    ),
+    preset(LIGHT, hex(0x000000), hex(0xFFFFFF)),
+    preset("Gruvbox Light", hex(0x3C3836), hex(0xFBF1C7)),
+    preset("Hello Kitty", hex(0x000000), hex(0xFFB0FF)), // Notepad++
+    preset("Khaki", hex(0x5F5F00), hex(0xD7D7AF)),       // Notepad++
+    preset("Navajo", hex(0x000000), hex(0xBA9C80)),      // Notepad++
+    preset("Paper", hex(0x5B4636), hex(0xF4ECD8)),
+    preset("Solarized Light", hex(0x657B83), hex(0xFDF6E3)), // Notepad++
+    preset(DARK, hex(0xD4D4D4), hex(0x1E1E1E)),
+    preset("Bespin", hex(0xBDAE9D), hex(0x2A211C)), // Notepad++
+    preset("Black Board", hex(0xF8F8F8), hex(0x0C1021)), // Notepad++
+    preset("Choco", hex(0xC3BE98), hex(0x1A0F0B)),  // Notepad++
+    preset("DansLeRuSH Dark", hex(0xC7C7C7), hex(0x2E2E2E)), // Notepad++
+    preset("Dark Mode Default", hex(0xDCDCCC), hex(0x3F3F3F)), // Notepad++
+    preset("Deep Black", hex(0xFFFFFF), hex(0x000000)), // Notepad++
+    preset("Dracula", hex(0xF8F8F2), hex(0x282A36)),
+    preset("Green Screen", hex(0x33FF66), hex(0x0C0C0C)),
+    preset("Gruvbox Dark", hex(0xEBDBB2), hex(0x282828)),
+    preset("High Contrast", hex(0xFFFFFF), hex(0x000000)),
+    preset("Hot Fudge Sundae", hex(0xB7975D), hex(0x2B0F01)), // Notepad++
+    preset("Mono Industrial", hex(0xFFFFFF), hex(0x222C28)),  // Notepad++
+    preset("Monokai", hex(0xF8F8F2), hex(0x272822)),          // Notepad++
+    preset("Mossy Lawn", hex(0xF2C476), hex(0x58693D)),       // Notepad++
+    preset("Nord", hex(0xD8DEE9), hex(0x2E3440)),
+    preset("Obsidian", hex(0xE0E2E4), hex(0x293134)), // Notepad++
+    preset("One Dark", hex(0xABB2BF), hex(0x282C34)),
+    preset("Plastic Code Wrap", hex(0xF8F8F8), hex(0x0B161D)), // Notepad++
+    preset("Ruby Blue", hex(0xFFFFFF), hex(0x112435)),         // Notepad++
+    preset("Solarized Dark", hex(0x839496), hex(0x002B36)),    // Notepad++
+    preset("Twilight", hex(0xF8F8F8), hex(0x141414)),          // Notepad++
+    preset("Vibrant Ink", hex(0xFFFFFF), hex(0x000000)),       // Notepad++
+    preset("Vim Dark Blue", hex(0xFFFFBF), hex(0x000040)),     // Notepad++
+    preset("Zenburn", hex(0xDCDCCC), hex(0x3F3F3F)),           // Notepad++
 ];
+
+/// Index of the first dark theme; PRESETS before it are light.
+pub fn first_dark() -> usize {
+    PRESETS
+        .iter()
+        .position(|p| is_dark(p.colors.bg))
+        .unwrap_or(PRESETS.len())
+}
 
 /// Index into PRESETS, or PRESETS.len() for the custom colors.
 pub fn index_of(name: &str) -> Option<usize> {
@@ -116,12 +135,28 @@ mod tests {
     }
 
     #[test]
-    fn presets_are_classified_as_named() {
-        for p in PRESETS {
-            let looks_light = p.name.contains("Light") || p.name == "Paper";
-            if looks_light {
-                assert!(!is_dark(p.colors.bg), "{}", p.name);
-            }
+    fn light_themes_come_before_dark_ones() {
+        let split = first_dark();
+        assert_eq!(PRESETS[0].name, LIGHT);
+        assert_eq!(PRESETS[split].name, DARK);
+        assert!(PRESETS[..split].iter().all(|p| !is_dark(p.colors.bg)));
+        assert!(PRESETS[split..].iter().all(|p| is_dark(p.colors.bg)));
+    }
+
+    #[test]
+    fn names_are_unique_and_sorted_within_groups() {
+        let split = first_dark();
+        for group in [&PRESETS[1..split], &PRESETS[split + 1..]] {
+            let names: Vec<_> = group.iter().map(|p| p.name.to_lowercase()).collect();
+            let mut sorted = names.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(names, sorted);
         }
+    }
+
+    #[test]
+    fn hex_is_rgb_order() {
+        assert_eq!(hex(0x112233), rgb(0x11, 0x22, 0x33));
     }
 }
