@@ -4,11 +4,12 @@
 
 .DESCRIPTION
     Copies zpp.exe to %LOCALAPPDATA%\Programs\z++ and registers it:
-    a Start menu shortcut, "z++" in Win+R (App Paths), z++ in the "Open with" list for common
-    text files, "Edit with z++" on the right-click menu, and an entry in Settings > Apps.
+    a Start menu shortcut, "z++" in Win+R (App Paths), "Edit with z++" on the right-click menu,
+    an entry in Settings > Apps, and a handler for every file type Windows Notepad and Notepad++
+    open. z++ becomes the default for those types that have no default app yet. Windows 11 does
+    not let an app take a type that already has a default (such as .txt from Notepad), so those
+    are switched in Settings > Apps > Default apps > z++.
     Everything lives under HKCU and your profile, and -Uninstall removes all of it.
-    Windows 11 does not let programs set themselves as the default app, so to open .txt files
-    with z++ by default, use "Open with" > z++ > "Always" once.
 
 .EXAMPLE
     pwsh -File scripts\install.ps1                 # installs the release build for this PC's architecture
@@ -32,8 +33,29 @@ $AppKey = 'Software\Classes\Applications\zpp.exe'
 $AppPathsKey = 'Software\Microsoft\Windows\CurrentVersion\App Paths\zpp.exe'
 $UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\z++'
 $EditVerbKey = 'Software\Classes\*\shell\zpp'
-$TextTypes = @('.txt', '.md', '.log', '.ini', '.cfg', '.conf', '.csv', '.json', '.xml', '.yml', '.yaml',
-    '.toml', '.ps1', '.bat', '.cmd', '.py', '.rs', '.js', '.ts', '.css', '.html', '.sql', '.sh', '.gitignore')
+$ProgId = 'zpp.file'
+$ProgIdKey = "Software\Classes\$ProgId"
+$CapabilitiesKey = 'Software\z++\Capabilities'
+$InstallStateKey = 'Software\z++\Install'
+$RegisteredAppsKey = 'Software\RegisteredApplications'
+
+# Types Windows Notepad registers (its package manifest, Microsoft.WindowsNotepad 11.2607).
+$NotepadTypes = @('.txt', '.log', '.ini', '.inf', '.ps1', '.psd1', '.psm1', '.scp', '.wtx')
+# Types Notepad++ offers in its file association settings (PowerEditor/src/MISC/RegExt/regExtDlg.cpp).
+$NotepadPlusPlusTypes = @(
+    '.txt', '.log', '.ini', '.inf',
+    '.h', '.hh', '.hpp', '.hxx', '.c', '.cpp', '.cxx', '.cc', '.m', '.mm',
+    '.vcxproj', '.vcproj', '.props', '.vsprops', '.manifest',
+    '.java', '.cs', '.pas', '.pp', '.inc',
+    '.html', '.htm', '.shtml', '.shtm', '.hta', '.asp', '.aspx', '.css', '.js', '.json', '.mjs', '.jsm', '.jsp',
+    '.php', '.php3', '.php4', '.php5', '.phps', '.phpt', '.phtml',
+    '.xml', '.xhtml', '.xht', '.xul', '.kml', '.xaml', '.xsml',
+    '.sh', '.bsh', '.bash', '.bat', '.cmd', '.nsi', '.nsh', '.lua', '.pl', '.pm', '.py',
+    '.rc', '.as', '.mx', '.vb', '.vbs',
+    '.f', '.for', '.f90', '.f95', '.f2k', '.tex', '.sql',
+    '.nfo', '.mak')
+$ExtraTypes = @('.md', '.cfg', '.conf', '.csv', '.yml', '.yaml', '.toml', '.rs', '.ts', '.gitignore')
+$TextTypes = @($NotepadTypes + $NotepadPlusPlusTypes + $ExtraTypes | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object -Unique)
 
 # A release zip has zpp.exe next to this script; a repo checkout has it under target\.
 function Get-DefaultExe {
@@ -59,12 +81,74 @@ function Remove-Key([string]$Key) {
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($Key, $false)
 }
 
+function Get-Value([Microsoft.Win32.RegistryKey]$Root, [string]$Key, [string]$Name) {
+    $k = $Root.OpenSubKey($Key)
+    if (-not $k) { return $null }
+    try { $k.GetValue($Name) } finally { $k.Dispose() }
+}
+
+function Remove-Value([string]$Key, [string]$Name) {
+    $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($Key, $true)
+    if (-not $k) { return }
+    try { $k.DeleteValue($Name, $false) } finally { $k.Dispose() }
+}
+
+# True when nothing opens this type by default yet (or z++ already does), so z++ can take it
+# without overriding anything. Types with a default belong to the user to change in Settings.
+function Test-Claimable([string]$Ext) {
+    $exts = "Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$Ext"
+    foreach ($choice in 'UserChoice', 'UserChoiceLatest') {
+        if (Get-Value ([Microsoft.Win32.Registry]::CurrentUser) "$exts\$choice" 'ProgId') { return $false }
+    }
+    $current = Get-Value ([Microsoft.Win32.Registry]::ClassesRoot) $Ext ''
+    -not $current -or $current -eq $ProgId
+}
+
+# Lets Windows offer z++ for every type: a ProgID, "Open with" entries, and the Capabilities
+# that make z++ appear in Settings > Apps > Default apps. Returns the types z++ became the default for.
+function Register-FileTypes {
+    $open = "`"$InstalledExe`" `"%1`""
+    Set-Value $ProgIdKey '' 'Text file (z++)'
+    Set-Value $ProgIdKey 'FriendlyTypeName' 'Text file (z++)'
+    Set-Value "$ProgIdKey\DefaultIcon" '' "`"$InstalledExe`",0"
+    Set-Value "$ProgIdKey\shell\open\command" '' $open
+
+    Set-Value $CapabilitiesKey 'ApplicationName' $AppName
+    Set-Value $CapabilitiesKey 'ApplicationDescription' 'A small, fast plain text editor.'
+    Set-Value $CapabilitiesKey 'ApplicationIcon' "`"$InstalledExe`",0"
+    Set-Value $RegisteredAppsKey $AppName $CapabilitiesKey
+
+    $claimed = @()
+    foreach ($ext in $TextTypes) {
+        Set-Value "$AppKey\SupportedTypes" $ext ''
+        Set-Value "Software\Classes\$ext\OpenWithProgids" $ProgId ([byte[]]@()) 'None'
+        Set-Value "$CapabilitiesKey\FileAssociations" $ext $ProgId
+        if (Test-Claimable $ext) {
+            Set-Value "Software\Classes\$ext" '' $ProgId
+            $claimed += $ext
+        }
+    }
+    Set-Value $InstallStateKey 'ClaimedTypes' ([string[]]$claimed) 'MultiString'
+    $claimed
+}
+
+function Unregister-FileTypes {
+    $claimed = @(Get-Value ([Microsoft.Win32.Registry]::CurrentUser) $InstallStateKey 'ClaimedTypes')
+    foreach ($ext in $claimed) {
+        if ($ext -and (Get-Value ([Microsoft.Win32.Registry]::CurrentUser) "Software\Classes\$ext" '') -eq $ProgId) {
+            Remove-Value "Software\Classes\$ext" ''
+        }
+    }
+    foreach ($ext in $TextTypes) { Remove-Value "Software\Classes\$ext\OpenWithProgids" $ProgId }
+    Remove-Value $RegisteredAppsKey $AppName
+    foreach ($key in $ProgIdKey, $CapabilitiesKey, $InstallStateKey) { Remove-Key $key }
+}
+
 function Register-App([string]$Version) {
     $open = "`"$InstalledExe`" `"%1`""
     Set-Value $AppKey 'FriendlyAppName' $AppName
     Set-Value "$AppKey\DefaultIcon" '' "`"$InstalledExe`",0"
     Set-Value "$AppKey\shell\open\command" '' $open
-    foreach ($ext in $TextTypes) { Set-Value "$AppKey\SupportedTypes" $ext '' }
 
     Set-Value $AppPathsKey '' $InstalledExe
 
@@ -116,13 +200,18 @@ function Install-Zpp {
     }
     $version = (Get-Item -LiteralPath $InstalledExe).VersionInfo.ProductVersion
     Register-App $version
+    $claimed = @(Register-FileTypes)
     New-StartMenuShortcut
     Update-Shell
     "Installed z++ $version to $InstallDir"
+    "z++ can open $($TextTypes.Count) file types. It is now the default for the $($claimed.Count) that had no default app."
+    "To switch the rest (such as .txt from Notepad): Settings > Apps > Default apps > z++, or run:"
+    '    start ms-settings:defaultapps?registeredAppUser=z++'
 }
 
 function Uninstall-Zpp {
     Assert-NotRunning
+    Unregister-FileTypes
     foreach ($key in $AppKey, $AppPathsKey, $EditVerbKey, $UninstallKey) { Remove-Key $key }
     if (Test-Path -LiteralPath $Shortcut) { Remove-Item -LiteralPath $Shortcut -Force }
     Update-Shell

@@ -11,6 +11,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 - The theme list draws each theme in its own colors, and View > Theme groups light and dark themes in columns.
 - An app icon, shown in the title bar, taskbar, Start menu and Explorer.
 - Version and publisher details in the exe's Properties > Details.
+- The installer registers z++ for the file types Windows Notepad and Notepad++ open (91 in all), lists z++ in Settings > Default apps, and makes z++ the default for types that have no default app.
 - `install.ps1`, a per-user installer: Start menu shortcut, Win+R, "Open with", "Edit with z++", and removal from Settings > Apps. Release zips include it.
 
 ## [0.2.0] - 2026-11-03

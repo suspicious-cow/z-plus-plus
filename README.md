@@ -29,7 +29,7 @@ Get the latest build from the [Releases page](https://github.com/suspicious-cow/
 pwsh -File install.ps1
 ```
 
-The installer copies z++ to `%LOCALAPPDATA%\Programs\z++` and adds a Start menu shortcut, `zpp` in Win+R, z++ in the "Open with" list for common text files, "Edit with z++" on the right-click menu, and an entry in Settings > Apps for removing it. Windows 11 doesn't let apps make themselves the default, so to open `.txt` files in z++ by default, right-click one, choose Open with > z++ and pick "Always". From a source checkout, run `pwsh -File scripts\install.ps1` after building.
+The installer copies z++ to `%LOCALAPPDATA%\Programs\z++` and adds a Start menu shortcut, `zpp` in Win+R, "Edit with z++" on the right-click menu, and an entry in Settings > Apps for removing it. It registers z++ for the 91 file types that Windows Notepad and Notepad++ open, and makes z++ the default for any of them that has no default app yet. Windows 11 doesn't let an app take over a type that already has a default, such as `.txt` from Notepad, so switch those in Settings > Apps > Default apps: search for z++ there and pick it for each type. When another app can also open a type, Windows asks once the first time you open one; choose z++ and "Always". From a source checkout, run `pwsh -File scripts\install.ps1` after building.
 
 The exe is not code-signed yet, so Windows SmartScreen may warn the first time you run it.
 
