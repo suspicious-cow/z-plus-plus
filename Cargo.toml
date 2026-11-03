@@ -1,6 +1,6 @@
 [package]
 name = "zpp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "z++: a small, fast plain text editor for Windows"
 license = "Apache-2.0"

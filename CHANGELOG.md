@@ -4,6 +4,8 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
 ### Added
 
 - 13 color themes and a Custom theme with your own text and background colors.
@@ -21,3 +23,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 - First version: New, Open, Save, Save As, undo, redo and clipboard commands, word wrap, and a light and dark mode.
 - Native builds for Windows ARM64 and x64 with a statically linked C runtime.
 - Keeps UTF-8, UTF-8 BOM, UTF-16 LE and ANSI encodings and LF line endings, and refuses files it could not save back unchanged.
+
+[Unreleased]: https://github.com/suspicious-cow/z-plus-plus/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/suspicious-cow/z-plus-plus/releases/tag/v0.2.0
+[0.1.0]: https://github.com/suspicious-cow/z-plus-plus/commit/c7655e2

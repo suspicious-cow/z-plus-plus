@@ -23,7 +23,7 @@ The project is early. It edits plain text well, but it is not a code editor: the
 
 ## Download
 
-There is no release yet. Build it from source as shown below. Release builds for both architectures will show up on the [Releases page](https://github.com/suspicious-cow/z-plus-plus/releases) once the first version is tagged.
+Get the latest build from the [Releases page](https://github.com/suspicious-cow/z-plus-plus/releases/latest). Pick `arm64` for Windows on Arm or `x64` for Intel and AMD PCs, unzip it, and run `zpp.exe`. There is nothing to install. The exe is not code-signed yet, so Windows SmartScreen may warn the first time you run it.
 
 ## Keyboard shortcuts
 
