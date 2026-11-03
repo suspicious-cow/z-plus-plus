@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in z++ does not work the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a UTF-16 file
+        2. Switch to the Nord theme
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Build
+      options:
+        - ARM64
+        - x64
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: From winver, for example "Windows 11 24H2, build 26100".
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: z++ version
+      description: From Help > About.

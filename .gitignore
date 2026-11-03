@@ -1,1 +1,3 @@
 /target
+# Agent memory stays local: this repo is public.
+/memory/

@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            Invoke-WebRequest https://win.rustup.rs/aarch64 -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain stable --profile minimal
+            Add-Content $env:GITHUB_PATH "$env:USERPROFILE\.cargo\bin"
+            $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+          }
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+          rustc -vV
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --release --target ${{ matrix.target }} -- -D warnings
+
+      - name: Test
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zpp-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/zpp.exe
+          if-no-files-found: error

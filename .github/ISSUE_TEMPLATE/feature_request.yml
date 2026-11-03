@@ -1,0 +1,16 @@
+name: Feature request
+description: An idea for something z++ should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The task you are trying to get done, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How z++ could help
+      description: Optional. How you picture it working.
