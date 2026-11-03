@@ -50,6 +50,8 @@ struct App {
     format: Cell<Format>,
     path: RefCell<Option<PathBuf>>,
     paint: RefCell<Option<theme::Paint>>,
+    /// The theme shown while the user browses the Theme menu or dropdown, before choosing.
+    preview: Cell<Option<usize>>,
 }
 
 thread_local! {
@@ -70,6 +72,7 @@ thread_local! {
         format: Cell::new(Format::default()),
         path: RefCell::new(None),
         paint: RefCell::new(None),
+        preview: Cell::new(None),
     };
 }
 
@@ -77,8 +80,12 @@ fn app<R>(f: impl FnOnce(&App) -> R) -> R {
     APP.with(f)
 }
 
+/// The colors on screen: the previewed theme while browsing, otherwise the chosen one.
 fn colors() -> Colors {
-    app(|a| themes::colors_of(a.theme.get(), a.custom.get()))
+    app(|a| {
+        let theme = a.preview.get().unwrap_or(a.theme.get());
+        themes::colors_of(theme, a.custom.get())
+    })
 }
 
 fn theme_or(name: &str, fallback: &str) -> usize {
@@ -211,6 +218,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         toolbar::WM_APP_SET_SIZE => {
             set_size(wparam as u32);
             SetFocus(app(|a| a.edit.get()));
+            0
+        }
+        toolbar::WM_APP_PREVIEW_THEME => {
+            match wparam {
+                toolbar::END_PREVIEW => {
+                    end_preview();
+                    toolbar::select_theme(app(|a| a.theme.get()));
+                }
+                index => begin_preview(index),
+            }
+            0
+        }
+        WM_MENUSELECT => {
+            on_menu_select(wparam, lparam);
+            0
+        }
+        WM_EXITMENULOOP => {
+            // Posted, so a theme chosen from the menu is committed before the preview ends.
+            PostMessageW(hwnd, toolbar::WM_APP_PREVIEW_THEME, toolbar::END_PREVIEW, 0);
             0
         }
         WM_CLOSE => {
@@ -360,6 +386,13 @@ unsafe fn on_list_command(id: u16) -> bool {
 
 /// Applies the current colors and font everywhere, then refreshes the menus and toolbar.
 unsafe fn apply_look() {
+    paint_look();
+    sync_controls();
+}
+
+/// Repaints the window, editor and toolbar in the current colors without touching the menus or
+/// the dropdown contents, so it is safe while a menu or dropdown is open.
+unsafe fn paint_look() {
     let colors = colors();
     let (main, edit, face, size) = app(|a| {
         (
@@ -380,7 +413,32 @@ unsafe fn apply_look() {
             size_tenths: size,
         },
     );
-    sync_controls();
+    toolbar::set_colors(colors);
+}
+
+/// Hovering a theme in View > Theme previews it; hovering anything else restores the theme.
+unsafe fn on_menu_select(wparam: WPARAM, lparam: LPARAM) {
+    let id = (wparam & 0xFFFF) as u16;
+    let flags = ((wparam >> 16) & 0xFFFF) as u32;
+    let is_closed = flags == 0xFFFF && lparam == 0;
+    let theme = menu::theme_index(id).filter(|_| !is_closed && flags & MF_POPUP == 0);
+    match theme {
+        Some(index) => begin_preview(index),
+        None => end_preview(),
+    }
+}
+
+unsafe fn begin_preview(index: usize) {
+    if index > themes::PRESETS.len() || app(|a| a.preview.replace(Some(index))) == Some(index) {
+        return;
+    }
+    paint_look();
+}
+
+unsafe fn end_preview() {
+    if app(|a| a.preview.take()).is_some() {
+        paint_look();
+    }
 }
 
 unsafe fn sync_controls() {
@@ -399,6 +457,7 @@ unsafe fn sync_controls() {
         );
         toolbar::sync(&toolbar::State {
             colors,
+            custom: a.custom.get(),
             theme: a.theme.get(),
             font_list: &font_list,
             face: &face,
@@ -409,7 +468,10 @@ unsafe fn sync_controls() {
 }
 
 unsafe fn set_theme(index: usize) {
-    app(|a| a.theme.set(index));
+    app(|a| {
+        a.preview.set(None);
+        a.theme.set(index);
+    });
     let is_dark = themes::is_dark(colors().bg);
     app(|a| {
         if is_dark {

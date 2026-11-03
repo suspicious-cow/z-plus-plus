@@ -12,7 +12,7 @@ The project is early. It edits plain text well, but it is not a code editor: the
 
 - New, Open, Save and Save As. Pass a file on the command line to open it: `zpp.exe notes.txt`.
 - Files keep their encoding (UTF-8, UTF-8 with BOM, UTF-16 LE or ANSI) and their LF line endings. z++ refuses to open a file it could not save back unchanged, such as a binary file, instead of damaging it.
-- 13 color themes, plus your own text and background colors. Dark themes also darken the title bar, menus and scroll bars.
+- 32 color themes, including all 22 that ship with Notepad++, plus your own text and background colors. Point at a theme in View > Theme or in the toolbar's theme list and the whole window shows it right away; move off it or press Escape to go back. Dark themes also darken the title bar, menus and scroll bars.
 - 11 open-licensed monospace fonts built into the exe, the usual Windows monospace fonts, and any font installed on the machine.
 - A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, font, size, colors, theme and word wrap. View > Toolbar hides it.
 - Settings are saved per user under `HKCU\Software\z++`.
@@ -81,6 +81,10 @@ Run the tests with `cargo test`.
 | [src/prefs.rs](src/prefs.rs) | Settings in the registry |
 
 Dark menus rely on two undocumented uxtheme.dll functions, the same approach Notepad++ uses. If a Windows update removes them, the menus fall back to light and everything else keeps working.
+
+## Theme colors
+
+z++ edits plain text, so each theme is one text color and one background color. For the 22 themes that ship with [Notepad++](https://github.com/notepad-plus-plus/notepad-plus-plus/tree/master/PowerEditor/installer/themes), those two colors come from each theme file's Default Style. [scripts/import_npp_themes.py](scripts/import_npp_themes.py) reads them. No theme file is copied into z++.
 
 ## Bundled fonts
 

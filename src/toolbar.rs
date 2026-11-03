@@ -20,6 +20,16 @@ use crate::{fonts, wide};
 
 /// Posted to the main window with the new font size in tenths of a point as wparam.
 pub const WM_APP_SET_SIZE: u32 = WM_APP + 1;
+/// Posted to the main window with a theme index to preview, or END_PREVIEW to go back.
+pub const WM_APP_PREVIEW_THEME: u32 = WM_APP + 2;
+pub const END_PREVIEW: usize = usize::MAX;
+
+const THEME_ROW_H: i32 = 24;
+const THEME_FIELD_H: i32 = 17;
+const THEME_TEXT_PAD: i32 = 8;
+const HOVER_FRAME: i32 = 2;
+/// Rows shown when a dropdown opens. Windows' own default is 30, taller than the editor window.
+const COMBO_VISIBLE_ROWS: usize = 16;
 
 const CLASS: *const u16 = w!("ZppToolbar");
 const HEIGHT: i32 = 90;
@@ -190,6 +200,7 @@ struct GroupBox {
 
 pub struct State<'a> {
     pub colors: Colors,
+    pub custom: Colors,
     pub theme: usize,
     pub font_list: &'a [String],
     pub face: &'a str,
@@ -214,6 +225,10 @@ struct Toolbar {
     list_brush: Cell<HBRUSH>,
     font_cmds: RefCell<Vec<u16>>,
     sizes: RefCell<Vec<u32>>,
+    /// Custom theme colors, for drawing the Custom row of the theme dropdown.
+    custom: Cell<Colors>,
+    /// The theme row last previewed while the dropdown is open.
+    hover_theme: Cell<Option<usize>>,
 }
 
 thread_local! {
@@ -234,6 +249,8 @@ thread_local! {
         list_brush: Cell::new(null_mut()),
         font_cmds: RefCell::new(Vec::new()),
         sizes: RefCell::new(Vec::new()),
+        custom: Cell::new(themes::PRESETS[0].colors),
+        hover_theme: Cell::new(None),
     } };
 }
 
@@ -444,7 +461,11 @@ unsafe fn create_combo(
         Combo::FontSize => ID_SIZE_COMBO,
         Combo::Theme => ID_THEME_COMBO,
     };
-    let style = WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | CBS_DROPDOWNLIST as u32;
+    let mut style = WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | CBS_DROPDOWNLIST as u32;
+    if which == Combo::Theme {
+        // Each row is drawn in its own theme's colors (see draw_theme_item).
+        style |= (CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32;
+    }
     let combo = CreateWindowExW(
         0,
         w!("COMBOBOX"),
@@ -460,6 +481,7 @@ unsafe fn create_combo(
         null(),
     );
     SendMessageW(combo, WM_SETFONT, tb(|t| t.ui_font.get()) as usize, 0);
+    SendMessageW(combo, CB_SETMINVISIBLE, COMBO_VISIBLE_ROWS, 0);
     combo
 }
 
@@ -501,16 +523,26 @@ unsafe fn add_tooltips(hwnd: HWND, hinst: HINSTANCE, buttons: &[Placed]) {
     }
 }
 
-/// Brings the dropdowns, toggles and colors up to date with the app.
-pub unsafe fn sync(state: &State) {
-    let is_dark = themes::is_dark(state.colors.bg);
-    let [font_combo, size_combo, theme_combo] = tb(|t| {
-        t.colors.set(state.colors);
-        t.is_wrap.set(state.is_wrap);
-        let old = t.list_brush.replace(CreateSolidBrush(state.colors.bg));
+/// Repaints the toolbar in new colors. Leaves the dropdowns alone, so it is safe to call while
+/// one is open (theme previews do).
+pub unsafe fn set_colors(colors: Colors) {
+    tb(|t| {
+        t.colors.set(colors);
+        let old = t.list_brush.replace(CreateSolidBrush(colors.bg));
         if !old.is_null() {
             DeleteObject(old as HGDIOBJ);
         }
+    });
+    InvalidateRect(tb(|t| t.hwnd.get()), null(), 0);
+}
+
+/// Brings the dropdowns, toggles and colors up to date with the app.
+pub unsafe fn sync(state: &State) {
+    let is_dark = themes::is_dark(state.colors.bg);
+    set_colors(state.colors);
+    let [font_combo, size_combo, theme_combo] = tb(|t| {
+        t.is_wrap.set(state.is_wrap);
+        t.custom.set(state.custom);
         t.combos.get()
     });
     fill_font_combo(font_combo, state);
@@ -525,7 +557,6 @@ pub unsafe fn sync(state: &State) {
         SetWindowTheme(combo, combo_theme, null());
         InvalidateRect(combo, null(), 1);
     }
-    InvalidateRect(tb(|t| t.hwnd.get()), null(), 0);
 }
 
 unsafe fn fill_font_combo(combo: HWND, state: &State) {
@@ -626,6 +657,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             on_combo(hwnd, wparam, lparam);
             0
         }
+        WM_MEASUREITEM => {
+            let mis = &mut *(lparam as *mut MEASUREITEMSTRUCT);
+            mis.itemHeight = if mis.itemID == u32::MAX {
+                s(THEME_FIELD_H)
+            } else {
+                s(THEME_ROW_H)
+            } as u32;
+            1
+        }
+        WM_DRAWITEM => {
+            draw_theme_item(hwnd, &*(lparam as *const DRAWITEMSTRUCT));
+            1
+        }
         WM_CTLCOLORLISTBOX if themes::is_dark(tb(|t| t.colors.get()).bg) => {
             let colors = tb(|t| t.colors.get());
             SetTextColor(wparam as HDC, colors.fg);
@@ -682,10 +726,15 @@ unsafe fn on_button_up(hwnd: HWND, lparam: LPARAM) {
 }
 
 unsafe fn on_combo(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
-    if ((wparam >> 16) & 0xFFFF) as u32 != CBN_SELCHANGE {
+    let code = ((wparam >> 16) & 0xFFFF) as u32;
+    let combo = lparam as HWND;
+    if wparam & 0xFFFF == ID_THEME_COMBO {
+        on_theme_combo(GetParent(hwnd), combo, code);
         return;
     }
-    let combo = lparam as HWND;
+    if code != CBN_SELCHANGE {
+        return;
+    }
     let sel = SendMessageW(combo, CB_GETCURSEL, 0, 0);
     if sel < 0 {
         return;
@@ -704,10 +753,98 @@ unsafe fn on_combo(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
                 PostMessageW(parent, WM_APP_SET_SIZE, size as usize, 0);
             }
         }
-        ID_THEME_COMBO => {
-            PostMessageW(parent, WM_COMMAND, theme_id(sel) as usize, 0);
+        _ => {}
+    }
+}
+
+/// While the list is open, moving through it previews each theme; choosing one commits it, and
+/// closing the list any other way goes back to the chosen theme.
+unsafe fn on_theme_combo(main: HWND, combo: HWND, code: u32) {
+    let sel = SendMessageW(combo, CB_GETCURSEL, 0, 0);
+    let is_dropped = SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) != 0;
+    match code {
+        CBN_SELCHANGE if sel >= 0 && is_dropped => preview(main, sel as usize),
+        CBN_SELCHANGE | CBN_SELENDOK if sel >= 0 => {
+            PostMessageW(main, WM_COMMAND, theme_id(sel as usize) as usize, 0);
+        }
+        CBN_SELENDCANCEL | CBN_CLOSEUP => {
+            tb(|t| t.hover_theme.set(None));
+            PostMessageW(main, WM_APP_PREVIEW_THEME, END_PREVIEW, 0);
         }
         _ => {}
+    }
+}
+
+/// Shows the chosen theme in the dropdown again after browsing without choosing.
+pub unsafe fn select_theme(index: usize) {
+    let combo = tb(|t| t.combos.get())[Combo::Theme as usize];
+    if SendMessageW(combo, CB_GETDROPPEDSTATE, 0, 0) == 0 {
+        SendMessageW(combo, CB_SETCURSEL, index, 0);
+    }
+}
+
+unsafe fn preview(main: HWND, index: usize) {
+    if tb(|t| t.hover_theme.replace(Some(index))) != Some(index) {
+        PostMessageW(main, WM_APP_PREVIEW_THEME, index, 0);
+    }
+}
+
+/// Draws one row of the theme dropdown, or its closed field, in that theme's own colors.
+/// The row under the pointer gets a frame and is previewed in the whole window.
+unsafe fn draw_theme_item(toolbar: HWND, dis: &DRAWITEMSTRUCT) {
+    if dis.itemID == u32::MAX {
+        return;
+    }
+    let index = dis.itemID as usize;
+    let colors = themes::colors_of(index, tb(|t| t.custom.get()));
+    let is_field = dis.itemState & ODS_COMBOBOXEDIT != 0;
+    let is_hot = !is_field && dis.itemState & ODS_SELECTED != 0;
+    let rc = dis.rcItem;
+    fill(dis.hDC, &rc, colors.bg);
+    if is_hot {
+        draw_frame(dis.hDC, &rc, colors.fg, s(HOVER_FRAME));
+    }
+    SetBkMode(dis.hDC, TRANSPARENT as i32);
+    SetTextColor(dis.hDC, colors.fg);
+    let mut text = RECT {
+        left: rc.left + s(THEME_TEXT_PAD),
+        ..rc
+    };
+    let name: Vec<u16> = themes::name_of(index).encode_utf16().collect();
+    draw_text(
+        dis.hDC,
+        tb(|t| t.ui_font.get()),
+        &name,
+        &mut text,
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
+    let is_dropped = SendMessageW(dis.hwndItem, CB_GETDROPPEDSTATE, 0, 0) != 0;
+    if is_hot && is_dropped {
+        preview(GetParent(toolbar), index);
+    }
+}
+
+unsafe fn draw_frame(hdc: HDC, rc: &RECT, color: u32, width: i32) {
+    let edges = [
+        RECT {
+            bottom: rc.top + width,
+            ..*rc
+        },
+        RECT {
+            top: rc.bottom - width,
+            ..*rc
+        },
+        RECT {
+            right: rc.left + width,
+            ..*rc
+        },
+        RECT {
+            left: rc.right - width,
+            ..*rc
+        },
+    ];
+    for edge in &edges {
+        fill(hdc, edge, color);
     }
 }
 

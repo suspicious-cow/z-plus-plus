@@ -110,14 +110,36 @@ pub unsafe fn build(windows_fonts: &[&str]) -> HMENU {
     bar
 }
 
+/// Three columns: light themes and Custom, then the dark themes split in two.
+/// Hovering an item previews it (see window.rs, WM_MENUSELECT).
 unsafe fn theme_menu() -> HMENU {
     let menu = CreatePopupMenu();
-    for (i, preset) in themes::PRESETS.iter().enumerate() {
+    let presets = themes::PRESETS;
+    let split = themes::first_dark();
+    let dark_half = split + (presets.len() - split).div_ceil(2);
+    heading(menu, "Light themes", 0);
+    for (i, preset) in presets.iter().enumerate().take(split) {
         append(menu, theme_id(i), preset.name);
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
-    append(menu, theme_id(themes::PRESETS.len()), themes::CUSTOM);
+    append(menu, theme_id(presets.len()), themes::CUSTOM);
+    heading(menu, "Dark themes", MF_MENUBARBREAK);
+    for (i, preset) in presets.iter().enumerate().skip(split) {
+        let column_break = if i == dark_half { MF_MENUBARBREAK } else { 0 };
+        let label = wide(preset.name);
+        AppendMenuW(
+            menu,
+            MF_STRING | column_break,
+            theme_id(i) as usize,
+            label.as_ptr(),
+        );
+    }
     menu
+}
+
+unsafe fn heading(menu: HMENU, label: &str, extra_flags: MENU_ITEM_FLAGS) {
+    let label = wide(label);
+    AppendMenuW(menu, MF_STRING | MF_GRAYED | extra_flags, 0, label.as_ptr());
 }
 
 unsafe fn font_menu(windows_fonts: &[&str]) -> HMENU {

@@ -6,6 +6,9 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- 19 more themes, so z++ now has every theme that ships with Notepad++ (their default text and background colors), 32 in all.
+- Live theme preview: pointing at a theme in View > Theme or the toolbar's theme list shows it in the whole window; Escape or moving away goes back.
+- The theme list draws each theme in its own colors, and View > Theme groups light and dark themes in columns.
 - An app icon, shown in the title bar, taskbar, Start menu and Explorer.
 - Version and publisher details in the exe's Properties > Details.
 - `install.ps1`, a per-user installer: Start menu shortcut, Win+R, "Open with", "Edit with z++", and removal from Settings > Apps. Release zips include it.
