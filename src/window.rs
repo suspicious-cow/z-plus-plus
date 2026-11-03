@@ -1,4 +1,4 @@
-//! Main window, menus, commands and the message loop.
+//! Main window, commands and the message loop.
 
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
@@ -8,41 +8,41 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use windows_sys::w;
 use windows_sys::Win32::Foundation::*;
+use windows_sys::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, LOGPIXELSY};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryW};
 use windows_sys::Win32::UI::Controls::Dialogs::*;
-use crate::richedit::EM_REDO;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::file::{self, Format};
-use crate::{editor, prefs, theme, wide};
+use crate::menu::*;
+use crate::richedit::EM_REDO;
+use crate::themes::{self, Colors};
+use crate::{editor, fonts, menu, prefs, theme, toolbar, wide};
 
 const APP_NAME: &str = "z++";
 const UNTITLED: &str = "Untitled";
 const PATH_BUF_LEN: usize = 32 * 1024;
-const DEFAULT_WIDTH: i32 = 1000;
-const DEFAULT_HEIGHT: i32 = 700;
+const DEFAULT_WIDTH: i32 = 1100;
+const DEFAULT_HEIGHT: i32 = 750;
 const FILE_FILTER: &str = "All files\0*.*\0Text files\0*.txt\0\0";
-
-const IDM_NEW: u16 = 100;
-const IDM_OPEN: u16 = 101;
-const IDM_SAVE: u16 = 102;
-const IDM_SAVE_AS: u16 = 103;
-const IDM_EXIT: u16 = 104;
-const IDM_UNDO: u16 = 110;
-const IDM_REDO: u16 = 111;
-const IDM_CUT: u16 = 112;
-const IDM_COPY: u16 = 113;
-const IDM_PASTE: u16 = 114;
-const IDM_SELECT_ALL: u16 = 115;
-const IDM_WRAP: u16 = 120;
-const IDM_DARK: u16 = 121;
+const LICENSES_FILE: &str = "z++ font licenses.txt";
+const TENTHS_PER_INCH: u32 = 720;
 
 struct App {
     main: Cell<HWND>,
     edit: Cell<HWND>,
-    is_dark: Cell<bool>,
+    toolbar: Cell<HWND>,
+    theme: Cell<usize>,
+    custom: Cell<Colors>,
+    last_light: Cell<usize>,
+    last_dark: Cell<usize>,
+    face: RefCell<String>,
+    size: Cell<u32>,
     is_wrap: Cell<bool>,
+    is_toolbar: Cell<bool>,
+    font_list: RefCell<Vec<String>>,
+    custom_colors: RefCell<[u32; 16]>,
     format: Cell<Format>,
     path: RefCell<Option<PathBuf>>,
     paint: RefCell<Option<theme::Paint>>,
@@ -52,8 +52,17 @@ thread_local! {
     static APP: App = App {
         main: Cell::new(null_mut()),
         edit: Cell::new(null_mut()),
-        is_dark: Cell::new(false),
+        toolbar: Cell::new(null_mut()),
+        theme: Cell::new(0),
+        custom: Cell::new(themes::PRESETS[0].colors),
+        last_light: Cell::new(0),
+        last_dark: Cell::new(1),
+        face: RefCell::new(fonts::DEFAULT_FACE.to_string()),
+        size: Cell::new(fonts::DEFAULT_SIZE_TENTHS),
         is_wrap: Cell::new(false),
+        is_toolbar: Cell::new(true),
+        font_list: RefCell::new(Vec::new()),
+        custom_colors: RefCell::new([0x00FF_FFFF; 16]),
         format: Cell::new(Format::default()),
         path: RefCell::new(None),
         paint: RefCell::new(None),
@@ -64,16 +73,21 @@ fn app<R>(f: impl FnOnce(&App) -> R) -> R {
     APP.with(f)
 }
 
+fn colors() -> Colors {
+    app(|a| themes::colors_of(a.theme.get(), a.custom.get()))
+}
+
+fn theme_or(name: &str, fallback: &str) -> usize {
+    themes::index_of(name).or_else(|| themes::index_of(fallback)).unwrap_or(0)
+}
+
 pub unsafe fn run(path: Option<PathBuf>) -> i32 {
     LoadLibraryW(w!("Msftedit.dll"));
+    fonts::register_bundled();
     let hinst = GetModuleHandleW(null());
-    let prefs = prefs::load();
-    app(|a| {
-        a.is_dark.set(prefs.is_dark);
-        a.is_wrap.set(prefs.is_wrap);
-        *a.paint.borrow_mut() = Some(theme::Paint::new());
-    });
-    theme::set_app_mode(prefs.is_dark);
+    let windows_fonts = fonts::windows_fonts();
+    load_prefs(&windows_fonts);
+    theme::set_app_mode(themes::is_dark(colors().bg));
 
     let class = w!("ZppMainWindow");
     let wc = WNDCLASSEXW {
@@ -91,7 +105,7 @@ pub unsafe fn run(path: Option<PathBuf>) -> i32 {
     let hwnd = CreateWindowExW(
         0, class, title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, DEFAULT_WIDTH, DEFAULT_HEIGHT,
-        null_mut(), build_menu(), hinst, null(),
+        null_mut(), menu::build(&windows_fonts), hinst, null(),
     );
     if hwnd.is_null() {
         return 1;
@@ -103,8 +117,43 @@ pub unsafe fn run(path: Option<PathBuf>) -> i32 {
     message_loop(hwnd)
 }
 
+unsafe fn load_prefs(windows_fonts: &[&str]) {
+    let p = prefs::load();
+    let font_list: Vec<String> = windows_fonts
+        .iter()
+        .map(|f| f.to_string())
+        .chain(fonts::BUNDLED.iter().map(|b| b.family.to_string()))
+        .collect();
+    let face = if fonts::is_available(&p.face) { p.face } else { fonts::DEFAULT_FACE.to_string() };
+    app(|a| {
+        a.theme.set(theme_or(&p.theme, themes::LIGHT));
+        a.last_light.set(theme_or(&p.last_light, themes::LIGHT));
+        a.last_dark.set(theme_or(&p.last_dark, themes::DARK));
+        a.custom.set(p.custom);
+        *a.face.borrow_mut() = face;
+        a.size.set(fonts::clamp_size(p.size_tenths));
+        a.is_wrap.set(p.is_wrap);
+        a.is_toolbar.set(p.is_toolbar);
+        *a.font_list.borrow_mut() = font_list;
+    });
+}
+
+unsafe fn save_prefs() {
+    let p = app(|a| prefs::Prefs {
+        theme: themes::name_of(a.theme.get()).to_string(),
+        last_light: themes::name_of(a.last_light.get()).to_string(),
+        last_dark: themes::name_of(a.last_dark.get()).to_string(),
+        custom: a.custom.get(),
+        face: a.face.borrow().clone(),
+        size_tenths: a.size.get(),
+        is_wrap: a.is_wrap.get(),
+        is_toolbar: a.is_toolbar.get(),
+    });
+    prefs::save(&p);
+}
+
 unsafe fn message_loop(hwnd: HWND) -> i32 {
-    let accel = build_accelerators();
+    let accel = menu::accelerators();
     let mut msg: MSG = zeroed();
     while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
         if TranslateAcceleratorW(hwnd, accel, &msg) == 0 {
@@ -119,8 +168,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     match msg {
         WM_CREATE => on_create(hwnd),
         WM_SIZE => {
-            let (w, h) = ((lparam & 0xFFFF) as i32, ((lparam >> 16) & 0xFFFF) as i32);
-            MoveWindow(app(|a| a.edit.get()), 0, 0, w, h, 1);
+            layout();
             0
         }
         WM_SETFOCUS => {
@@ -128,6 +176,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_COMMAND => on_command(hwnd, wparam, lparam),
+        toolbar::WM_APP_SET_SIZE => {
+            set_size(wparam as u32);
+            SetFocus(app(|a| a.edit.get()));
+            0
+        }
         WM_CLOSE => {
             if confirm_discard() {
                 DestroyWindow(hwnd);
@@ -136,14 +189,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_QUERYENDSESSION => confirm_discard() as LRESULT,
         WM_DESTROY => {
-            app(|a| prefs::save(&prefs::Prefs { is_dark: a.is_dark.get(), is_wrap: a.is_wrap.get() }));
+            save_prefs();
             PostQuitMessage(0);
             0
         }
-        theme::WM_UAHDRAWMENU | theme::WM_UAHDRAWMENUITEM if app(|a| a.is_dark.get()) => {
+        theme::WM_UAHDRAWMENU | theme::WM_UAHDRAWMENUITEM if themes::is_dark(colors().bg) => {
             app(|a| {
                 let paint = a.paint.borrow();
-                let paint = paint.as_ref().expect("paint initialized in run");
+                let Some(paint) = paint.as_ref() else { return };
                 if msg == theme::WM_UAHDRAWMENU {
                     theme::draw_menu_bar(hwnd, lparam, paint);
                 } else {
@@ -154,8 +207,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_NCPAINT | WM_NCACTIVATE => {
             let result = DefWindowProcW(hwnd, msg, wparam, lparam);
-            if app(|a| a.is_dark.get()) {
-                app(|a| theme::paint_menu_underline(hwnd, a.paint.borrow().as_ref().expect("paint")));
+            if themes::is_dark(colors().bg) {
+                app(|a| {
+                    if let Some(paint) = a.paint.borrow().as_ref() {
+                        theme::paint_menu_underline(hwnd, paint);
+                    }
+                });
             }
             result
         }
@@ -169,16 +226,32 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
     if edit.is_null() {
         return -1;
     }
-    let (is_dark, is_wrap) = app(|a| {
+    let bar = toolbar::create(hwnd, hinst);
+    let (is_wrap, is_toolbar) = app(|a| {
         a.main.set(hwnd);
         a.edit.set(edit);
-        (a.is_dark.get(), a.is_wrap.get())
+        a.toolbar.set(bar);
+        (a.is_wrap.get(), a.is_toolbar.get())
     });
+    if !is_toolbar {
+        ShowWindow(bar, SW_HIDE);
+    }
     editor::set_wrap(edit, is_wrap);
-    theme::apply(hwnd, edit, is_dark);
-    update_checks();
+    apply_look();
     update_title();
     0
+}
+
+unsafe fn layout() {
+    let (main, edit, bar, is_toolbar) = app(|a| (a.main.get(), a.edit.get(), a.toolbar.get(), a.is_toolbar.get()));
+    if edit.is_null() {
+        return;
+    }
+    let mut rc: RECT = zeroed();
+    GetClientRect(main, &mut rc);
+    let bar_h = if is_toolbar { toolbar::height() } else { 0 };
+    MoveWindow(bar, 0, 0, rc.right, bar_h, 1);
+    MoveWindow(edit, 0, bar_h, rc.right, (rc.bottom - bar_h).max(0), 1);
 }
 
 unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -202,6 +275,7 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         }
         IDM_EXIT => {
             SendMessageW(hwnd, WM_CLOSE, 0, 0);
+            return 0;
         }
         IDM_UNDO => editor::send(edit, WM_UNDO),
         IDM_REDO => editor::send(edit, EM_REDO),
@@ -210,10 +284,184 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_PASTE => editor::send(edit, WM_PASTE),
         IDM_SELECT_ALL => editor::select_all(edit),
         IDM_WRAP => toggle_wrap(),
-        IDM_DARK => toggle_dark(),
-        _ => return DefWindowProcW(hwnd, WM_COMMAND, wparam, lparam),
+        IDM_TOGGLE_DARK => toggle_dark(),
+        IDM_TEXT_COLOR => pick_color(true),
+        IDM_BACK_COLOR => pick_color(false),
+        IDM_TOOLBAR => toggle_toolbar(),
+        IDM_FONT_DIALOG => font_dialog(),
+        IDM_FONT_BIGGER => set_size(app(|a| a.size.get()) + fonts::SIZE_STEP_TENTHS),
+        IDM_FONT_SMALLER => set_size(app(|a| a.size.get()).saturating_sub(fonts::SIZE_STEP_TENTHS)),
+        IDM_FONT_RESET => set_size(fonts::DEFAULT_SIZE_TENTHS),
+        IDM_LICENSES => show_licenses(),
+        IDM_ABOUT => about(),
+        _ => {
+            if !on_list_command(id) {
+                return DefWindowProcW(hwnd, WM_COMMAND, wparam, lparam);
+            }
+        }
     }
+    SetFocus(edit);
     0
+}
+
+/// Theme and font commands, whose IDs come from lists. False when `id` is neither.
+unsafe fn on_list_command(id: u16) -> bool {
+    if let Some(index) = menu::theme_index(id) {
+        set_theme(index);
+        return true;
+    }
+    let count = app(|a| a.font_list.borrow().len());
+    let Some(index) = menu::font_index(id, count) else { return false };
+    let face = app(|a| a.font_list.borrow()[index].clone());
+    set_face(face);
+    true
+}
+
+/// Applies the current colors and font everywhere, then refreshes the menus and toolbar.
+unsafe fn apply_look() {
+    let colors = colors();
+    let (main, edit, face, size) = app(|a| (a.main.get(), a.edit.get(), a.face.borrow().clone(), a.size.get()));
+    let paint = theme::Paint::new(colors);
+    app(|a| *a.paint.borrow_mut() = Some(paint));
+    theme::apply(main, edit, &theme::Look { colors, face: &face, size_tenths: size });
+    sync_controls();
+}
+
+unsafe fn sync_controls() {
+    let colors = colors();
+    app(|a| {
+        let font_list = a.font_list.borrow();
+        let face = a.face.borrow();
+        let bar = GetMenu(a.main.get());
+        menu::update_checks(bar, a.theme.get(), &font_list, &face, a.is_wrap.get(), a.is_toolbar.get());
+        toolbar::sync(&toolbar::State {
+            colors,
+            theme: a.theme.get(),
+            font_list: &font_list,
+            face: &face,
+            size_tenths: a.size.get(),
+            is_wrap: a.is_wrap.get(),
+        });
+    });
+}
+
+unsafe fn set_theme(index: usize) {
+    app(|a| a.theme.set(index));
+    let is_dark = themes::is_dark(colors().bg);
+    app(|a| if is_dark { a.last_dark.set(index) } else { a.last_light.set(index) });
+    apply_look();
+}
+
+/// Switches to the last light theme used, or the last dark one.
+unsafe fn toggle_dark() {
+    let (is_dark, light, dark, custom) = app(|a| {
+        (themes::is_dark(themes::colors_of(a.theme.get(), a.custom.get()).bg), a.last_light.get(), a.last_dark.get(), a.custom.get())
+    });
+    let mut target = if is_dark { light } else { dark };
+    if themes::is_dark(themes::colors_of(target, custom).bg) == is_dark {
+        target = theme_or(if is_dark { themes::LIGHT } else { themes::DARK }, themes::LIGHT);
+    }
+    set_theme(target);
+}
+
+/// Opens the system color picker for the text or background color; the result is the Custom theme.
+unsafe fn pick_color(is_text: bool) {
+    let current = colors();
+    let mut custom_colors = app(|a| *a.custom_colors.borrow());
+    let mut cc: CHOOSECOLORW = zeroed();
+    cc.lStructSize = size_of::<CHOOSECOLORW>() as u32;
+    cc.hwndOwner = app(|a| a.main.get());
+    cc.rgbResult = if is_text { current.fg } else { current.bg };
+    cc.lpCustColors = custom_colors.as_mut_ptr();
+    cc.Flags = CC_RGBINIT | CC_FULLOPEN | CC_ANYCOLOR;
+    if ChooseColorW(&mut cc) == 0 {
+        return;
+    }
+    let picked = if is_text { Colors { fg: cc.rgbResult, ..current } } else { Colors { bg: cc.rgbResult, ..current } };
+    app(|a| {
+        *a.custom_colors.borrow_mut() = custom_colors;
+        a.custom.set(picked);
+    });
+    set_theme(themes::PRESETS.len());
+}
+
+unsafe fn set_face(face: String) {
+    app(|a| *a.face.borrow_mut() = face);
+    apply_look();
+}
+
+unsafe fn set_size(tenths: u32) {
+    app(|a| a.size.set(fonts::clamp_size(tenths)));
+    apply_look();
+}
+
+/// The system font dialog, for any installed font. Bundled fonts are in the Font menu instead,
+/// because fonts loaded from memory are private to z++ and the dialog cannot list them.
+unsafe fn font_dialog() {
+    let (main, face, size) = app(|a| (a.main.get(), a.face.borrow().clone(), a.size.get()));
+    let screen = GetDC(null_mut());
+    let dpi = GetDeviceCaps(screen, LOGPIXELSY as _) as u32;
+    ReleaseDC(null_mut(), screen);
+    let mut lf: LOGFONTW = zeroed();
+    lf.lfHeight = -(((size * dpi + TENTHS_PER_INCH / 2) / TENTHS_PER_INCH) as i32);
+    lf.lfCharSet = DEFAULT_CHARSET as u8;
+    let units: Vec<u16> = face.encode_utf16().take(lf.lfFaceName.len() - 1).collect();
+    lf.lfFaceName[..units.len()].copy_from_slice(&units);
+    let mut cf: CHOOSEFONTW = zeroed();
+    cf.lStructSize = size_of::<CHOOSEFONTW>() as u32;
+    cf.hwndOwner = main;
+    cf.lpLogFont = &mut lf;
+    cf.iPointSize = size as i32;
+    cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_NOVERTFONTS | CF_FORCEFONTEXIST | CF_NOSCRIPTSEL | CF_SCREENFONTS;
+    if ChooseFontW(&mut cf) == 0 {
+        sync_controls();
+        return;
+    }
+    let len = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(lf.lfFaceName.len());
+    app(|a| {
+        *a.face.borrow_mut() = String::from_utf16_lossy(&lf.lfFaceName[..len]);
+        a.size.set(fonts::clamp_size(cf.iPointSize.max(0) as u32));
+    });
+    apply_look();
+}
+
+unsafe fn toggle_wrap() {
+    let (edit, is_wrap) = app(|a| {
+        a.is_wrap.set(!a.is_wrap.get());
+        (a.edit.get(), a.is_wrap.get())
+    });
+    editor::set_wrap(edit, is_wrap);
+    sync_controls();
+}
+
+unsafe fn toggle_toolbar() {
+    let (bar, is_toolbar) = app(|a| {
+        a.is_toolbar.set(!a.is_toolbar.get());
+        (a.toolbar.get(), a.is_toolbar.get())
+    });
+    ShowWindow(bar, if is_toolbar { SW_SHOW } else { SW_HIDE });
+    layout();
+    sync_controls();
+}
+
+/// Writes the bundled font licenses to a temp file and opens it in a second z++ window.
+unsafe fn show_licenses() {
+    let path = std::env::temp_dir().join(LICENSES_FILE);
+    if let Err(e) = std::fs::write(&path, fonts::licenses_text()) {
+        return error_box(&format!("Could not write {}:\n{e}", path.display()));
+    }
+    let spawned = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg(&path).spawn());
+    if let Err(e) = spawned {
+        error_box(&format!("Could not open {}:\n{e}", path.display()));
+    }
+}
+
+unsafe fn about() {
+    info_box(&format!(
+        "{APP_NAME} {}\nA small, fast plain text editor.\n\n{} fonts bundled; see Help > Font Licenses.",
+        env!("CARGO_PKG_VERSION"),
+        fonts::BUNDLED.len(),
+    ));
 }
 
 unsafe fn cmd_new() {
@@ -313,14 +561,15 @@ unsafe fn file_dialog(is_save: bool) -> Option<PathBuf> {
     if let Some(p) = &current {
         if is_save {
             let name: Vec<u16> = p.file_name().unwrap_or_default().encode_wide().collect();
-            buf[..name.len().min(PATH_BUF_LEN - 1)].copy_from_slice(&name[..name.len().min(PATH_BUF_LEN - 1)]);
+            let n = name.len().min(PATH_BUF_LEN - 1);
+            buf[..n].copy_from_slice(&name[..n]);
         }
         initial_dir = p.parent().map(|d| d.as_os_str().encode_wide().chain([0]).collect());
     }
+    let filter: Vec<u16> = FILE_FILTER.encode_utf16().collect();
     let mut ofn: OPENFILENAMEW = zeroed();
     ofn.lStructSize = size_of::<OPENFILENAMEW>() as u32;
     ofn.hwndOwner = app(|a| a.main.get());
-    let filter: Vec<u16> = FILE_FILTER.encode_utf16().collect();
     ofn.lpstrFilter = filter.as_ptr();
     ofn.nFilterIndex = 1;
     ofn.lpstrFile = buf.as_mut_ptr();
@@ -341,32 +590,6 @@ unsafe fn file_dialog(is_save: bool) -> Option<PathBuf> {
     Some(PathBuf::from(OsString::from_wide(&buf[..len])))
 }
 
-unsafe fn toggle_dark() {
-    let (main, edit, is_dark) = app(|a| {
-        a.is_dark.set(!a.is_dark.get());
-        (a.main.get(), a.edit.get(), a.is_dark.get())
-    });
-    theme::apply(main, edit, is_dark);
-    update_checks();
-    update_title();
-}
-
-unsafe fn toggle_wrap() {
-    let (edit, is_wrap) = app(|a| {
-        a.is_wrap.set(!a.is_wrap.get());
-        (a.edit.get(), a.is_wrap.get())
-    });
-    editor::set_wrap(edit, is_wrap);
-    update_checks();
-}
-
-unsafe fn update_checks() {
-    let (menu, is_dark, is_wrap) = app(|a| (GetMenu(a.main.get()), a.is_dark.get(), a.is_wrap.get()));
-    let flag = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
-    CheckMenuItem(menu, IDM_DARK as u32, MF_BYCOMMAND | flag(is_dark));
-    CheckMenuItem(menu, IDM_WRAP as u32, MF_BYCOMMAND | flag(is_wrap));
-}
-
 fn display_name() -> String {
     app(|a| {
         a.path.borrow().as_ref().and_then(|p| p.file_name()).map_or_else(
@@ -384,63 +607,6 @@ unsafe fn update_title() {
     let marker = if editor::is_modified(edit) { "*" } else { "" };
     let title = wide(&format!("{marker}{} - {APP_NAME}", display_name()));
     SetWindowTextW(main, title.as_ptr());
-}
-
-unsafe fn build_menu() -> HMENU {
-    let bar = CreateMenu();
-    let file = popup(&[
-        (IDM_NEW, "&New\tCtrl+N"),
-        (IDM_OPEN, "&Open...\tCtrl+O"),
-        (IDM_SAVE, "&Save\tCtrl+S"),
-        (IDM_SAVE_AS, "Save &As...\tCtrl+Shift+S"),
-        (0, ""),
-        (IDM_EXIT, "E&xit"),
-    ]);
-    let edit = popup(&[
-        (IDM_UNDO, "&Undo\tCtrl+Z"),
-        (IDM_REDO, "&Redo\tCtrl+Y"),
-        (0, ""),
-        (IDM_CUT, "Cu&t\tCtrl+X"),
-        (IDM_COPY, "&Copy\tCtrl+C"),
-        (IDM_PASTE, "&Paste\tCtrl+V"),
-        (0, ""),
-        (IDM_SELECT_ALL, "Select &All\tCtrl+A"),
-    ]);
-    let view = popup(&[(IDM_WRAP, "&Word Wrap\tAlt+Z"), (IDM_DARK, "&Dark Mode\tCtrl+Shift+D")]);
-    for (menu, label) in [(file, "&File"), (edit, "&Edit"), (view, "&View")] {
-        let label = wide(label);
-        AppendMenuW(bar, MF_POPUP, menu as usize, label.as_ptr());
-    }
-    bar
-}
-
-/// id 0 is a separator.
-unsafe fn popup(items: &[(u16, &str)]) -> HMENU {
-    let menu = CreatePopupMenu();
-    for &(id, label) in items {
-        if id == 0 {
-            AppendMenuW(menu, MF_SEPARATOR, 0, null());
-        } else {
-            let label = wide(label);
-            AppendMenuW(menu, MF_STRING, id as usize, label.as_ptr());
-        }
-    }
-    menu
-}
-
-unsafe fn build_accelerators() -> HACCEL {
-    let ctrl = (FVIRTKEY | FCONTROL) as u8;
-    let ctrl_shift = (FVIRTKEY | FCONTROL | FSHIFT) as u8;
-    let alt = (FVIRTKEY | FALT) as u8;
-    let table = [
-        ACCEL { fVirt: ctrl, key: b'N' as u16, cmd: IDM_NEW },
-        ACCEL { fVirt: ctrl, key: b'O' as u16, cmd: IDM_OPEN },
-        ACCEL { fVirt: ctrl, key: b'S' as u16, cmd: IDM_SAVE },
-        ACCEL { fVirt: ctrl_shift, key: b'S' as u16, cmd: IDM_SAVE_AS },
-        ACCEL { fVirt: ctrl_shift, key: b'D' as u16, cmd: IDM_DARK },
-        ACCEL { fVirt: alt, key: b'Z' as u16, cmd: IDM_WRAP },
-    ];
-    CreateAcceleratorTableW(table.as_ptr(), table.len() as i32)
 }
 
 unsafe fn error_box(text: &str) {

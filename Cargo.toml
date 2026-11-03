@@ -5,6 +5,11 @@ edition = "2021"
 description = "z++: a small, fast plain text editor for Windows"
 publish = false
 
+[features]
+default = ["bundled-fonts"]
+# Embeds the open-licensed fonts in fonts/ (about 2 MB). Build with --no-default-features to leave them out.
+bundled-fonts = []
+
 [dependencies.windows-sys]
 version = "0.61"
 features = [

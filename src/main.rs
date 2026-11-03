@@ -2,9 +2,13 @@
 
 mod editor;
 mod file;
+mod fonts;
+mod menu;
 mod prefs;
 mod richedit;
 mod theme;
+mod themes;
+mod toolbar;
 mod window;
 
 use std::path::PathBuf;
