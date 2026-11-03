@@ -27,13 +27,21 @@ pub struct Format {
 /// Refuses input that would not survive a save unchanged, so z++ never silently damages a file.
 pub fn decode(bytes: &[u8]) -> Result<(Vec<u16>, Format), &'static str> {
     let (text, encoding): (Vec<u16>, Encoding) = if let Some(rest) = bytes.strip_prefix(&UTF8_BOM) {
-        let s = std::str::from_utf8(rest).map_err(|_| "it has a UTF-8 BOM but is not valid UTF-8")?;
+        let s =
+            std::str::from_utf8(rest).map_err(|_| "it has a UTF-8 BOM but is not valid UTF-8")?;
         (s.encode_utf16().collect(), Encoding::Utf8Bom)
     } else if let Some(rest) = bytes.strip_prefix(&UTF16LE_BOM) {
         if rest.len() % 2 != 0 {
             return Err("it has a UTF-16 BOM but an odd number of bytes");
         }
-        (rest.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect(), Encoding::Utf16Le)
+        (
+            rest.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect(),
+            Encoding::Utf16Le,
+        )
     } else if let Ok(s) = std::str::from_utf8(bytes) {
         (s.encode_utf16().collect(), Encoding::Utf8)
     } else {
@@ -43,13 +51,23 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<u16>, Format), &'static str> {
         return Err("it contains NUL characters (a binary file, or UTF-16 without a BOM)");
     }
     let is_lf_only = text.contains(&LF) && !text.windows(2).any(|w| w == [CR, LF]);
-    Ok((text, Format { encoding, is_lf_only }))
+    Ok((
+        text,
+        Format {
+            encoding,
+            is_lf_only,
+        },
+    ))
 }
 
 /// Encodes text for saving. Returns the bytes and the format actually used:
 /// ANSI text with characters the code page cannot hold is saved as UTF-8 instead.
 pub fn encode(text: &[u16], format: Format) -> (Vec<u8>, Format) {
-    let text = if format.is_lf_only { crlf_to_lf(text) } else { text.to_vec() };
+    let text = if format.is_lf_only {
+        crlf_to_lf(text)
+    } else {
+        text.to_vec()
+    };
     match format.encoding {
         Encoding::Utf8 => (String::from_utf16_lossy(&text).into_bytes(), format),
         Encoding::Utf8Bom => {
@@ -65,7 +83,10 @@ pub fn encode(text: &[u16], format: Format) -> (Vec<u8>, Format) {
         Encoding::Ansi => match wide_to_ansi(&text) {
             Some(bytes) => (bytes, format),
             None => {
-                let utf8 = Format { encoding: Encoding::Utf8, ..format };
+                let utf8 = Format {
+                    encoding: Encoding::Utf8,
+                    ..format
+                };
                 (String::from_utf16_lossy(&text).into_bytes(), utf8)
             }
         },
@@ -113,13 +134,31 @@ fn wide_to_ansi(text: &[u16]) -> Option<Vec<u8>> {
     }
     let len = text.len() as i32;
     unsafe {
-        let n = WideCharToMultiByte(CP_ACP, 0, text.as_ptr(), len, null_mut(), 0, null(), null_mut());
+        let n = WideCharToMultiByte(
+            CP_ACP,
+            0,
+            text.as_ptr(),
+            len,
+            null_mut(),
+            0,
+            null(),
+            null_mut(),
+        );
         if n <= 0 {
             return None;
         }
         let mut out = vec![0u8; n as usize];
         let mut used_default = 0;
-        let written = WideCharToMultiByte(CP_ACP, 0, text.as_ptr(), len, out.as_mut_ptr(), n, null(), &mut used_default);
+        let written = WideCharToMultiByte(
+            CP_ACP,
+            0,
+            text.as_ptr(),
+            len,
+            out.as_mut_ptr(),
+            n,
+            null(),
+            &mut used_default,
+        );
         (written == n && used_default == 0).then_some(out)
     }
 }

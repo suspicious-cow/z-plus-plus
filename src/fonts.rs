@@ -6,7 +6,8 @@ use std::mem::zeroed;
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::LPARAM;
 use windows_sys::Win32::Graphics::Gdi::{
-    AddFontMemResourceEx, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW,
+    AddFontMemResourceEx, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW,
+    TEXTMETRICW,
 };
 
 pub const DEFAULT_FACE: &str = "Consolas";
@@ -16,7 +17,13 @@ pub const MAX_SIZE_TENTHS: u32 = 720;
 pub const SIZE_STEP_TENTHS: u32 = 10;
 
 /// Shown first in the Font menu when installed. They ship with Windows 11.
-const WINDOWS_FONTS: &[&str] = &["Consolas", "Cascadia Mono", "Cascadia Code", "Courier New", "Lucida Console"];
+const WINDOWS_FONTS: &[&str] = &[
+    "Consolas",
+    "Cascadia Mono",
+    "Cascadia Code",
+    "Courier New",
+    "Lucida Console",
+];
 
 pub struct Bundled {
     pub family: &'static str,
@@ -37,17 +44,41 @@ macro_rules! bundled {
 
 #[cfg(feature = "bundled-fonts")]
 pub const BUNDLED: &[Bundled] = &[
-    bundled!("Anonymous Pro", "AnonymousPro-Regular.ttf", "AnonymousPro-OFL.txt"),
-    bundled!("Courier Prime", "CourierPrime-Regular.ttf", "CourierPrime-OFL.txt"),
+    bundled!(
+        "Anonymous Pro",
+        "AnonymousPro-Regular.ttf",
+        "AnonymousPro-OFL.txt"
+    ),
+    bundled!(
+        "Courier Prime",
+        "CourierPrime-Regular.ttf",
+        "CourierPrime-OFL.txt"
+    ),
     bundled!("Fira Mono", "FiraMono-Regular.ttf", "FiraMono-OFL.txt"),
     bundled!("Go Mono", "Go-Mono.ttf", "GoMono-LICENSE.txt"),
     bundled!("Hack", "Hack-Regular.ttf", "Hack-LICENSE.txt"),
-    bundled!("IBM Plex Mono", "IBMPlexMono-Regular.ttf", "IBMPlexMono-OFL.txt"),
-    bundled!("JetBrains Mono", "JetBrainsMono-Regular.ttf", "JetBrainsMono-OFL.txt"),
+    bundled!(
+        "IBM Plex Mono",
+        "IBMPlexMono-Regular.ttf",
+        "IBMPlexMono-OFL.txt"
+    ),
+    bundled!(
+        "JetBrains Mono",
+        "JetBrainsMono-Regular.ttf",
+        "JetBrainsMono-OFL.txt"
+    ),
     bundled!("PT Mono", "PTM55FT.ttf", "PTMono-OFL.txt"),
-    bundled!("Source Code Pro", "SourceCodePro-Regular.ttf", "SourceCodePro-OFL.txt"),
+    bundled!(
+        "Source Code Pro",
+        "SourceCodePro-Regular.ttf",
+        "SourceCodePro-OFL.txt"
+    ),
     bundled!("Space Mono", "SpaceMono-Regular.ttf", "SpaceMono-OFL.txt"),
-    bundled!("Ubuntu Mono", "UbuntuMono-Regular.ttf", "UbuntuMono-UFL.txt"),
+    bundled!(
+        "Ubuntu Mono",
+        "UbuntuMono-Regular.ttf",
+        "UbuntuMono-UFL.txt"
+    ),
 ];
 
 #[cfg(not(feature = "bundled-fonts"))]
@@ -56,14 +87,24 @@ pub const BUNDLED: &[Bundled] = &[];
 /// Makes the embedded fonts usable by this process only. Nothing is installed.
 pub unsafe fn register_bundled() {
     for font in BUNDLED {
+        // Windows writes the font count through this pointer, so it must point at writable memory.
         let mut count = 0u32;
-        AddFontMemResourceEx(font.data.as_ptr() as *const c_void, font.data.len() as u32, null(), &mut count);
+        AddFontMemResourceEx(
+            font.data.as_ptr() as *const c_void,
+            font.data.len() as u32,
+            null(),
+            std::ptr::addr_of_mut!(count),
+        );
     }
 }
 
 /// The WINDOWS_FONTS that are installed on this machine.
 pub fn windows_fonts() -> Vec<&'static str> {
-    WINDOWS_FONTS.iter().copied().filter(|f| is_installed(f)).collect()
+    WINDOWS_FONTS
+        .iter()
+        .copied()
+        .filter(|f| is_installed(f))
+        .collect()
 }
 
 pub fn is_available(face: &str) -> bool {
@@ -90,19 +131,30 @@ pub fn licenses_text() -> String {
 /// Fonts added with AddFontMemResourceEx are not enumerable, so this only sees installed fonts.
 pub fn is_installed(face: &str) -> bool {
     let mut lf: LOGFONTW = unsafe { zeroed() };
-    lf.lfCharSet = DEFAULT_CHARSET as u8;
+    lf.lfCharSet = DEFAULT_CHARSET;
     let units: Vec<u16> = face.encode_utf16().take(lf.lfFaceName.len() - 1).collect();
     lf.lfFaceName[..units.len()].copy_from_slice(&units);
     let mut is_found = false;
     unsafe {
         let hdc = GetDC(null_mut());
-        EnumFontFamiliesExW(hdc, &lf, Some(on_font), &mut is_found as *mut bool as LPARAM, 0);
+        EnumFontFamiliesExW(
+            hdc,
+            &lf,
+            Some(on_font),
+            &mut is_found as *mut bool as LPARAM,
+            0,
+        );
         ReleaseDC(null_mut(), hdc);
     }
     is_found
 }
 
-unsafe extern "system" fn on_font(_: *const LOGFONTW, _: *const TEXTMETRICW, _: u32, lparam: LPARAM) -> i32 {
+unsafe extern "system" fn on_font(
+    _: *const LOGFONTW,
+    _: *const TEXTMETRICW,
+    _: u32,
+    lparam: LPARAM,
+) -> i32 {
     *(lparam as *mut bool) = true;
     0
 }

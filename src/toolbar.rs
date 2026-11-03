@@ -9,7 +9,9 @@ use windows_sys::w;
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::Controls::*;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::menu::*;
@@ -67,8 +69,17 @@ enum Combo {
 
 #[derive(Clone, Copy)]
 enum Item {
-    Button { id: u16, glyph: u16, label: &'static str, tip: &'static str, kind: Kind },
-    Dropdown { which: Combo, width: i32 },
+    Button {
+        id: u16,
+        glyph: u16,
+        label: &'static str,
+        tip: &'static str,
+        kind: Kind,
+    },
+    Dropdown {
+        which: Combo,
+        width: i32,
+    },
 }
 
 struct Group {
@@ -77,11 +88,23 @@ struct Group {
 }
 
 const fn large(id: u16, glyph: u16, label: &'static str, tip: &'static str) -> Item {
-    Item::Button { id, glyph, label, tip, kind: Kind::Large }
+    Item::Button {
+        id,
+        glyph,
+        label,
+        tip,
+        kind: Kind::Large,
+    }
 }
 
 const fn small(id: u16, glyph: u16, label: &'static str, tip: &'static str) -> Item {
-    Item::Button { id, glyph, label, tip, kind: Kind::Small }
+    Item::Button {
+        id,
+        glyph,
+        label,
+        tip,
+        kind: Kind::Small,
+    }
 }
 
 // Glyphs are Segoe Fluent Icons / Segoe MDL2 Assets code points.
@@ -109,7 +132,16 @@ const GROUPS: &[Group] = &[
     Group {
         caption: "Font",
         rows: &[
-            &[Item::Dropdown { which: Combo::Font, width: 172 }, Item::Dropdown { which: Combo::FontSize, width: 58 }],
+            &[
+                Item::Dropdown {
+                    which: Combo::Font,
+                    width: 172,
+                },
+                Item::Dropdown {
+                    which: Combo::FontSize,
+                    width: 58,
+                },
+            ],
             &[
                 small(IDM_FONT_BIGGER, 0xE8E8, "", "Bigger (Ctrl+=)"),
                 small(IDM_FONT_SMALLER, 0xE8E7, "", "Smaller (Ctrl+-)"),
@@ -122,10 +154,18 @@ const GROUPS: &[Group] = &[
     Group {
         caption: "View",
         rows: &[
-            &[Item::Dropdown { which: Combo::Theme, width: 150 }],
+            &[Item::Dropdown {
+                which: Combo::Theme,
+                width: 150,
+            }],
             &[
                 small(IDM_WRAP, 0xE751, "Wrap", "Word wrap (Alt+Z)"),
-                small(IDM_TOGGLE_DARK, 0xE708, "Light", "Switch light/dark (Ctrl+Shift+D)"),
+                small(
+                    IDM_TOGGLE_DARK,
+                    0xE708,
+                    "Light",
+                    "Switch light/dark (Ctrl+Shift+D)",
+                ),
             ],
         ],
     },
@@ -177,7 +217,7 @@ struct Toolbar {
 }
 
 thread_local! {
-    static TB: Toolbar = Toolbar {
+    static TB: Toolbar = const { Toolbar {
         hwnd: Cell::new(null_mut()),
         dpi: Cell::new(BASE_DPI),
         buttons: RefCell::new(Vec::new()),
@@ -194,7 +234,7 @@ thread_local! {
         list_brush: Cell::new(null_mut()),
         font_cmds: RefCell::new(Vec::new()),
         sizes: RefCell::new(Vec::new()),
-    };
+    } };
 }
 
 fn tb<R>(f: impl FnOnce(&Toolbar) -> R) -> R {
@@ -219,7 +259,20 @@ pub unsafe fn create(parent: HWND, hinst: HINSTANCE) -> HWND {
         ..zeroed()
     };
     RegisterClassExW(&wc);
-    let hwnd = CreateWindowExW(0, CLASS, null(), WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 0, 0, parent, null_mut(), hinst, null());
+    let hwnd = CreateWindowExW(
+        0,
+        CLASS,
+        null(),
+        WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN,
+        0,
+        0,
+        0,
+        0,
+        parent,
+        null_mut(),
+        hinst,
+        null(),
+    );
     let screen = GetDC(null_mut());
     let dpi = GetDeviceCaps(screen, LOGPIXELSY as _);
     ReleaseDC(null_mut(), screen);
@@ -235,20 +288,42 @@ pub unsafe fn create(parent: HWND, hinst: HINSTANCE) -> HWND {
 unsafe fn create_fonts() {
     let mut ncm: NONCLIENTMETRICSW = zeroed();
     ncm.cbSize = size_of::<NONCLIENTMETRICSW>() as u32;
-    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &mut ncm as *mut _ as *mut _, 0);
-    let icon_face = ICON_FONTS.iter().copied().find(|f| fonts::is_installed(f)).unwrap_or(ICON_FONTS[0]);
+    SystemParametersInfoW(
+        SPI_GETNONCLIENTMETRICS,
+        ncm.cbSize,
+        &mut ncm as *mut _ as *mut _,
+        0,
+    );
+    let icon_face = ICON_FONTS
+        .iter()
+        .copied()
+        .find(|f| fonts::is_installed(f))
+        .unwrap_or(ICON_FONTS[0]);
     tb(|t| {
         t.ui_font.set(CreateFontIndirectW(&ncm.lfMessageFont));
         t.icon_font.set(icon_font(icon_face, s(ICON_PX)));
-        t.small_icon_font.set(icon_font(icon_face, s(SMALL_ICON_PX)));
+        t.small_icon_font
+            .set(icon_font(icon_face, s(SMALL_ICON_PX)));
     });
 }
 
 unsafe fn icon_font(face: &str, px: i32) -> HFONT {
     let face = wide(face);
     CreateFontW(
-        -px, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0, DEFAULT_CHARSET as u32, OUT_DEFAULT_PRECIS as u32,
-        CLIP_DEFAULT_PRECIS as u32, CLEARTYPE_QUALITY as u32, DEFAULT_PITCH as u32, face.as_ptr(),
+        -px,
+        0,
+        0,
+        0,
+        FW_NORMAL as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET as u32,
+        OUT_DEFAULT_PRECIS as u32,
+        CLIP_DEFAULT_PRECIS as u32,
+        CLEARTYPE_QUALITY as u32,
+        DEFAULT_PITCH as u32,
+        face.as_ptr(),
     )
 }
 
@@ -264,15 +339,42 @@ unsafe fn layout(hwnd: HWND, hinst: HINSTANCE) {
         let left = x;
         let mut right = left;
         for (r, row) in group.rows.iter().enumerate() {
-            let y = if group.rows.len() == 1 { s(PAD) } else if r == 0 { s(ROW1_Y) } else { s(ROW2_Y) };
+            let y = if group.rows.len() == 1 {
+                s(PAD)
+            } else if r == 0 {
+                s(ROW1_Y)
+            } else {
+                s(ROW2_Y)
+            };
             let mut rx = left;
             for item in row.iter() {
                 let w = item_width(hdc, item);
                 match *item {
-                    Item::Button { id, glyph, label, kind, .. } => {
-                        let h = if kind == Kind::Large { s(LARGE_H) } else { s(SMALL_H) };
-                        let rect = RECT { left: rx, top: y, right: rx + w, bottom: y + h };
-                        buttons.push(Placed { id, glyph, label, kind, rect });
+                    Item::Button {
+                        id,
+                        glyph,
+                        label,
+                        kind,
+                        ..
+                    } => {
+                        let h = if kind == Kind::Large {
+                            s(LARGE_H)
+                        } else {
+                            s(SMALL_H)
+                        };
+                        let rect = RECT {
+                            left: rx,
+                            top: y,
+                            right: rx + w,
+                            bottom: y + h,
+                        };
+                        buttons.push(Placed {
+                            id,
+                            glyph,
+                            label,
+                            kind,
+                            rect,
+                        });
                     }
                     Item::Dropdown { which, .. } => {
                         combos[which as usize] = create_combo(hwnd, hinst, which, rx, y, w);
@@ -282,7 +384,11 @@ unsafe fn layout(hwnd: HWND, hinst: HINSTANCE) {
             }
             right = right.max(rx - s(GAP));
         }
-        groups.push(GroupBox { caption: group.caption, left, right });
+        groups.push(GroupBox {
+            caption: group.caption,
+            left,
+            right,
+        });
         x = right + s(GROUP_GAP);
     }
     SelectObject(hdc, old);
@@ -298,7 +404,9 @@ unsafe fn layout(hwnd: HWND, hinst: HINSTANCE) {
 unsafe fn item_width(hdc: HDC, item: &Item) -> i32 {
     match *item {
         Item::Dropdown { width, .. } => s(width),
-        Item::Button { id, label, kind, .. } => {
+        Item::Button {
+            id, label, kind, ..
+        } => {
             let text_w = if id == IDM_TOGGLE_DARK {
                 text_width(hdc, "Light").max(text_width(hdc, "Dark"))
             } else {
@@ -323,14 +431,34 @@ unsafe fn text_width(hdc: HDC, text: &str) -> i32 {
     size.cx
 }
 
-unsafe fn create_combo(parent: HWND, hinst: HINSTANCE, which: Combo, x: i32, y: i32, w: i32) -> HWND {
+unsafe fn create_combo(
+    parent: HWND,
+    hinst: HINSTANCE,
+    which: Combo,
+    x: i32,
+    y: i32,
+    w: i32,
+) -> HWND {
     let id = match which {
         Combo::Font => ID_FONT_COMBO,
         Combo::FontSize => ID_SIZE_COMBO,
         Combo::Theme => ID_THEME_COMBO,
     };
     let style = WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | CBS_DROPDOWNLIST as u32;
-    let combo = CreateWindowExW(0, w!("COMBOBOX"), null(), style, x, y, w, s(COMBO_LIST_H), parent, id as _, hinst, null());
+    let combo = CreateWindowExW(
+        0,
+        w!("COMBOBOX"),
+        null(),
+        style,
+        x,
+        y,
+        w,
+        s(COMBO_LIST_H),
+        parent,
+        id as _,
+        hinst,
+        null(),
+    );
     SendMessageW(combo, WM_SETFONT, tb(|t| t.ui_font.get()) as usize, 0);
     combo
 }
@@ -338,13 +466,27 @@ unsafe fn create_combo(parent: HWND, hinst: HINSTANCE, which: Combo, x: i32, y: 
 unsafe fn add_tooltips(hwnd: HWND, hinst: HINSTANCE, buttons: &[Placed]) {
     let style = WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX;
     let tip = CreateWindowExW(
-        WS_EX_TOPMOST, w!("tooltips_class32"), null(), style,
-        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, null_mut(), hinst, null(),
+        WS_EX_TOPMOST,
+        w!("tooltips_class32"),
+        null(),
+        style,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        hwnd,
+        null_mut(),
+        hinst,
+        null(),
     );
-    let tips = GROUPS.iter().flat_map(|g| g.rows.iter()).flat_map(|r| r.iter()).filter_map(|item| match *item {
-        Item::Button { tip, .. } => Some(tip),
-        Item::Dropdown { .. } => None,
-    });
+    let tips = GROUPS
+        .iter()
+        .flat_map(|g| g.rows.iter())
+        .flat_map(|r| r.iter())
+        .filter_map(|item| match *item {
+            Item::Button { tip, .. } => Some(tip),
+            Item::Dropdown { .. } => None,
+        });
     for (i, (button, text)) in buttons.iter().zip(tips).enumerate() {
         let mut text = wide(text);
         let mut ti: TTTOOLINFOW = zeroed();
@@ -374,7 +516,11 @@ pub unsafe fn sync(state: &State) {
     fill_font_combo(font_combo, state);
     fill_size_combo(size_combo, state.size_tenths);
     fill_theme_combo(theme_combo, state.theme);
-    let combo_theme = if is_dark { w!("DarkMode_CFD") } else { w!("CFD") };
+    let combo_theme = if is_dark {
+        w!("DarkMode_CFD")
+    } else {
+        w!("CFD")
+    };
     for combo in [font_combo, size_combo, theme_combo] {
         SetWindowTheme(combo, combo_theme, null());
         InvalidateRect(combo, null(), 1);
@@ -389,7 +535,10 @@ unsafe fn fill_font_combo(combo: HWND, state: &State) {
         add_string(combo, name);
         cmds.push(IDM_FONT_BASE + i as u16);
     }
-    let listed = state.font_list.iter().position(|n| n.eq_ignore_ascii_case(state.face));
+    let listed = state
+        .font_list
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case(state.face));
     let selected = listed.unwrap_or_else(|| {
         add_string(combo, state.face);
         cmds.push(0);
@@ -409,7 +558,11 @@ unsafe fn fill_size_combo(combo: HWND, size_tenths: u32) {
     }
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
     for &t in &sizes {
-        let label = if t % 10 == 0 { format!("{}", t / 10) } else { format!("{}.{}", t / 10, t % 10) };
+        let label = if t % 10 == 0 {
+            format!("{}", t / 10)
+        } else {
+            format!("{}.{}", t / 10, t % 10)
+        };
         add_string(combo, &label);
     }
     let selected = sizes.iter().position(|&t| t == size_tenths).unwrap_or(0);
@@ -484,7 +637,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 fn point(lparam: LPARAM) -> POINT {
-    POINT { x: (lparam & 0xFFFF) as i16 as i32, y: ((lparam >> 16) & 0xFFFF) as i16 as i32 }
+    POINT {
+        x: (lparam & 0xFFFF) as i16 as i32,
+        y: ((lparam >> 16) & 0xFFFF) as i16 as i32,
+    }
 }
 
 fn hit_test(lparam: LPARAM) -> Option<usize> {
@@ -514,7 +670,9 @@ unsafe fn on_mouse_move(hwnd: HWND, lparam: LPARAM) {
 }
 
 unsafe fn on_button_up(hwnd: HWND, lparam: LPARAM) {
-    let Some(pressed) = tb(|t| t.pressed.get()) else { return };
+    let Some(pressed) = tb(|t| t.pressed.get()) else {
+        return;
+    };
     let hit = hit_test(lparam);
     ReleaseCapture();
     if hit == Some(pressed) {
@@ -570,7 +728,12 @@ unsafe fn paint(hwnd: HWND) {
         draw_button(mem, i, colors);
     }
     draw_groups(mem, &rc, colors);
-    let line = RECT { left: 0, top: rc.bottom - 1, right: rc.right, bottom: rc.bottom };
+    let line = RECT {
+        left: 0,
+        top: rc.bottom - 1,
+        right: rc.right,
+        bottom: rc.bottom,
+    };
     fill(mem, &line, themes::mix(colors.bg, colors.fg, LINE_MIX));
 
     BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
@@ -583,7 +746,16 @@ unsafe fn paint(hwnd: HWND) {
 unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
     let (rect, id, glyph, label, kind, hot, pressed, is_wrap) = tb(|t| {
         let b = &t.buttons.borrow()[index];
-        (b.rect, b.id, b.glyph, b.label, b.kind, t.hot.get(), t.pressed.get(), t.is_wrap.get())
+        (
+            b.rect,
+            b.id,
+            b.glyph,
+            b.label,
+            b.kind,
+            t.hot.get(),
+            t.pressed.get(),
+            t.is_wrap.get(),
+        )
     });
     let is_hot = hot == Some(index);
     let is_down = is_hot && pressed == Some(index);
@@ -599,22 +771,55 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
         _ => (glyph, label),
     };
     SetTextColor(hdc, colors.fg);
-    let (icon_font, small_icon_font, ui_font) = tb(|t| (t.icon_font.get(), t.small_icon_font.get(), t.ui_font.get()));
+    let (icon_font, small_icon_font, ui_font) =
+        tb(|t| (t.icon_font.get(), t.small_icon_font.get(), t.ui_font.get()));
     let glyph_text = [glyph];
     let flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
     if kind == Kind::Large {
-        let mut icon = RECT { left: rect.left, top: rect.top + s(6), right: rect.right, bottom: rect.top + s(34) };
+        let mut icon = RECT {
+            left: rect.left,
+            top: rect.top + s(6),
+            right: rect.right,
+            bottom: rect.top + s(34),
+        };
         draw_text(hdc, icon_font, &glyph_text, &mut icon, flags);
-        let mut text = RECT { left: rect.left, top: rect.top + s(36), right: rect.right, bottom: rect.bottom - s(4) };
-        draw_text(hdc, ui_font, &label.encode_utf16().collect::<Vec<_>>(), &mut text, flags);
+        let mut text = RECT {
+            left: rect.left,
+            top: rect.top + s(36),
+            right: rect.right,
+            bottom: rect.bottom - s(4),
+        };
+        draw_text(
+            hdc,
+            ui_font,
+            &label.encode_utf16().collect::<Vec<_>>(),
+            &mut text,
+            flags,
+        );
         return;
     }
-    let mut icon = RECT { left: rect.left, top: rect.top, right: rect.left + s(SMALL_ICON_W), bottom: rect.bottom };
+    let mut icon = RECT {
+        left: rect.left,
+        top: rect.top,
+        right: rect.left + s(SMALL_ICON_W),
+        bottom: rect.bottom,
+    };
     draw_text(hdc, small_icon_font, &glyph_text, &mut icon, flags);
     draw_swatch(hdc, id, &icon, colors);
     if !label.is_empty() {
-        let mut text = RECT { left: icon.right - s(2), top: rect.top, right: rect.right, bottom: rect.bottom };
-        draw_text(hdc, ui_font, &label.encode_utf16().collect::<Vec<_>>(), &mut text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        let mut text = RECT {
+            left: icon.right - s(2),
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        };
+        draw_text(
+            hdc,
+            ui_font,
+            &label.encode_utf16().collect::<Vec<_>>(),
+            &mut text,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        );
     }
 }
 
@@ -631,7 +836,12 @@ unsafe fn draw_swatch(hdc: HDC, id: u16, icon: &RECT, colors: Colors) {
         right: icon.right - s(7),
         bottom: icon.bottom - s(5) + s(SWATCH_H),
     };
-    let border = RECT { left: bar.left - 1, top: bar.top - 1, right: bar.right + 1, bottom: bar.bottom + 1 };
+    let border = RECT {
+        left: bar.left - 1,
+        top: bar.top - 1,
+        right: bar.right + 1,
+        bottom: bar.bottom + 1,
+    };
     fill(hdc, &border, themes::mix(colors.bg, colors.fg, DIM_MIX));
     fill(hdc, &bar, color);
 }
@@ -641,14 +851,40 @@ unsafe fn draw_groups(hdc: HDC, rc: &RECT, colors: Colors) {
     let dim = themes::mix(colors.bg, colors.fg, DIM_MIX);
     let line = themes::mix(colors.bg, colors.fg, LINE_MIX);
     SetTextColor(hdc, dim);
-    let groups = tb(|t| t.groups.borrow().iter().map(|g| (g.caption, g.left, g.right)).collect::<Vec<_>>());
+    let groups = tb(|t| {
+        t.groups
+            .borrow()
+            .iter()
+            .map(|g| (g.caption, g.left, g.right))
+            .collect::<Vec<_>>()
+    });
     let last = groups.len().saturating_sub(1);
     for (i, (caption, left, right)) in groups.into_iter().enumerate() {
-        let mut text = RECT { left, top: rc.bottom - s(CAPTION_H) - s(2), right, bottom: rc.bottom - s(2) };
-        draw_text(hdc, ui_font, &caption.encode_utf16().collect::<Vec<_>>(), &mut text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        let mut text = RECT {
+            left,
+            top: rc.bottom - s(CAPTION_H) - s(2),
+            right,
+            bottom: rc.bottom - s(2),
+        };
+        draw_text(
+            hdc,
+            ui_font,
+            &caption.encode_utf16().collect::<Vec<_>>(),
+            &mut text,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
         if i < last {
             let x = right + s(GROUP_GAP) / 2;
-            fill(hdc, &RECT { left: x, top: s(6), right: x + 1, bottom: rc.bottom - s(6) }, line);
+            fill(
+                hdc,
+                &RECT {
+                    left: x,
+                    top: s(6),
+                    right: x + 1,
+                    bottom: rc.bottom - s(6),
+                },
+                line,
+            );
         }
     }
 }
@@ -669,7 +905,15 @@ unsafe fn round_fill(hdc: HDC, rect: &RECT, color: u32) {
     let brush = CreateSolidBrush(color);
     let old_brush = SelectObject(hdc, brush as HGDIOBJ);
     let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    RoundRect(hdc, rect.left, rect.top, rect.right, rect.bottom, s(CORNER), s(CORNER));
+    RoundRect(
+        hdc,
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
+        s(CORNER),
+        s(CORNER),
+    );
     SelectObject(hdc, old_pen);
     SelectObject(hdc, old_brush);
     DeleteObject(brush as HGDIOBJ);

@@ -5,5 +5,8 @@ fn main() {
     let manifest = dir.join("zpp.manifest");
     println!("cargo:rerun-if-changed=zpp.manifest");
     println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
-    println!("cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}", manifest.display());
+    println!(
+        "cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}",
+        manifest.display()
+    );
 }

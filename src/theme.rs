@@ -12,10 +12,12 @@ use windows_sys::w;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows_sys::Win32::Graphics::Gdi::*;
-use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
+use windows_sys::Win32::System::LibraryLoader::{
+    GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
+};
 use windows_sys::Win32::UI::Controls::{
-    SetWindowTheme, DRAWITEMSTRUCT, EM_GETMODIFY, EM_SETMODIFY, ODS_DISABLED, ODS_GRAYED, ODS_HOTLIGHT,
-    ODS_INACTIVE, ODS_NOACCEL, ODS_SELECTED,
+    SetWindowTheme, DRAWITEMSTRUCT, EM_GETMODIFY, EM_SETMODIFY, ODS_DISABLED, ODS_GRAYED,
+    ODS_HOTLIGHT, ODS_INACTIVE, ODS_NOACCEL, ODS_SELECTED,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -74,7 +76,12 @@ impl Paint {
     pub unsafe fn new(colors: Colors) -> Self {
         let mut ncm: NONCLIENTMETRICSW = zeroed();
         ncm.cbSize = size_of::<NONCLIENTMETRICSW>() as u32;
-        SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &mut ncm as *mut _ as *mut c_void, 0);
+        SystemParametersInfoW(
+            SPI_GETNONCLIENTMETRICS,
+            ncm.cbSize,
+            &mut ncm as *mut _ as *mut c_void,
+            0,
+        );
         Paint {
             bar: CreateSolidBrush(colors.bg),
             hot: CreateSolidBrush(themes::mix(colors.bg, colors.fg, HOT_MIX_PERCENT)),
@@ -103,7 +110,11 @@ pub unsafe fn set_app_mode(is_dark: bool) {
     }
     if let Some(f) = GetProcAddress(ux, ORD_SET_PREFERRED_APP_MODE as *const u8) {
         let set_mode: unsafe extern "system" fn(i32) -> i32 = transmute(f);
-        set_mode(if is_dark { APP_MODE_FORCE_DARK } else { APP_MODE_FORCE_LIGHT });
+        set_mode(if is_dark {
+            APP_MODE_FORCE_DARK
+        } else {
+            APP_MODE_FORCE_LIGHT
+        });
     }
     if let Some(f) = GetProcAddress(ux, ORD_FLUSH_MENU_THEMES as *const u8) {
         let flush: unsafe extern "system" fn() = transmute(f);
@@ -115,12 +126,26 @@ pub unsafe fn apply(main: HWND, edit: HWND, look: &Look) {
     let is_dark = themes::is_dark(look.colors.bg);
     set_app_mode(is_dark);
     let flag: i32 = is_dark as i32;
-    DwmSetWindowAttribute(main, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &flag as *const i32 as *const c_void, 4);
-    let scroll_theme = if is_dark { w!("DarkMode_Explorer") } else { w!("Explorer") };
+    DwmSetWindowAttribute(
+        main,
+        DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+        &flag as *const i32 as *const c_void,
+        4,
+    );
+    let scroll_theme = if is_dark {
+        w!("DarkMode_Explorer")
+    } else {
+        w!("Explorer")
+    };
     SetWindowTheme(edit, scroll_theme, null());
     apply_editor(edit, look);
     DrawMenuBar(main);
-    RedrawWindow(main, null(), null_mut(), RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
+    RedrawWindow(
+        main,
+        null(),
+        null_mut(),
+        RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN,
+    );
 }
 
 unsafe fn apply_editor(edit: HWND, look: &Look) {
@@ -131,7 +156,11 @@ unsafe fn apply_editor(edit: HWND, look: &Look) {
     cf.dwMask = CFM_COLOR | CFM_FACE | CFM_SIZE;
     cf.crTextColor = look.colors.fg;
     cf.yHeight = (look.size_tenths * TWIPS_PER_TENTH_POINT) as i32;
-    let face: Vec<u16> = look.face.encode_utf16().take(cf.szFaceName.len() - 1).collect();
+    let face: Vec<u16> = look
+        .face
+        .encode_utf16()
+        .take(cf.szFaceName.len() - 1)
+        .collect();
     cf.szFaceName[..face.len()].copy_from_slice(&face);
     let cf_ptr = &cf as *const CHARFORMATW as isize;
     SendMessageW(edit, EM_SETCHARFORMAT, SCF_DEFAULT as usize, cf_ptr);
@@ -142,7 +171,9 @@ unsafe fn apply_editor(edit: HWND, look: &Look) {
 /// Fills the whole menu bar. Only called for dark themes.
 pub unsafe fn draw_menu_bar(hwnd: HWND, lparam: LPARAM, paint: &Paint) {
     let um = &*(lparam as *const UahMenu);
-    let Some(mut rc) = menu_bar_rect(hwnd) else { return };
+    let Some(mut rc) = menu_bar_rect(hwnd) else {
+        return;
+    };
     let mut win: RECT = zeroed();
     GetWindowRect(hwnd, &mut win);
     OffsetRect(&mut rc, -win.left, -win.top);
@@ -162,7 +193,11 @@ pub unsafe fn draw_menu_item(lparam: LPARAM, paint: &Paint) {
 
     let state = item.dis.itemState;
     let is_hot = state & (ODS_HOTLIGHT | ODS_SELECTED) != 0;
-    FillRect(item.um.hdc, &item.dis.rcItem, if is_hot { paint.hot } else { paint.bar });
+    FillRect(
+        item.um.hdc,
+        &item.dis.rcItem,
+        if is_hot { paint.hot } else { paint.bar },
+    );
 
     let mut flags = DT_CENTER | DT_SINGLELINE | DT_VCENTER;
     if state & ODS_NOACCEL != 0 {
@@ -186,7 +221,12 @@ pub unsafe fn paint_menu_underline(hwnd: HWND, paint: &Paint) {
     let mut win: RECT = zeroed();
     GetWindowRect(hwnd, &mut win);
     OffsetRect(&mut client, -win.left, -win.top);
-    let line = RECT { left: client.left, top: client.top - 1, right: client.right, bottom: client.top };
+    let line = RECT {
+        left: client.left,
+        top: client.top - 1,
+        right: client.right,
+        bottom: client.top,
+    };
     let hdc = GetWindowDC(hwnd);
     FillRect(hdc, &line, paint.bar);
     ReleaseDC(hwnd, hdc);

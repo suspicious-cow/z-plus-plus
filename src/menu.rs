@@ -97,7 +97,13 @@ pub unsafe fn build(windows_fonts: &[&str]) -> HMENU {
     ]);
     insert_submenu(view, 0, theme_menu(), "T&heme");
     let help = popup(&[(IDM_LICENSES, "Font &Licenses"), (IDM_ABOUT, "&About z++")]);
-    for (menu, label) in [(file, "&File"), (edit, "&Edit"), (format, "F&ormat"), (view, "&View"), (help, "&Help")] {
+    for (menu, label) in [
+        (file, "&File"),
+        (edit, "&Edit"),
+        (format, "F&ormat"),
+        (view, "&View"),
+        (help, "&Help"),
+    ] {
         let label = wide(label);
         AppendMenuW(bar, MF_POPUP, menu as usize, label.as_ptr());
     }
@@ -125,18 +131,39 @@ unsafe fn font_menu(windows_fonts: &[&str]) -> HMENU {
         AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, heading.as_ptr());
     }
     for (i, font) in fonts::BUNDLED.iter().enumerate() {
-        append(menu, IDM_FONT_BASE + (windows_fonts.len() + i) as u16, font.family);
+        append(
+            menu,
+            IDM_FONT_BASE + (windows_fonts.len() + i) as u16,
+            font.family,
+        );
     }
     menu
 }
 
 /// Puts a check on the current theme, the current font (if it is in the list), word wrap and toolbar.
-pub unsafe fn update_checks(bar: HMENU, theme: usize, font_list: &[String], face: &str, is_wrap: bool, is_toolbar: bool) {
+pub unsafe fn update_checks(
+    bar: HMENU,
+    theme: usize,
+    font_list: &[String],
+    face: &str,
+    is_wrap: bool,
+    is_toolbar: bool,
+) {
     check(bar, IDM_TOOLBAR, is_toolbar);
     let last_theme = theme_id(themes::PRESETS.len());
-    CheckMenuRadioItem(bar, theme_id(0) as u32, last_theme as u32, theme_id(theme) as u32, MF_BYCOMMAND);
+    CheckMenuRadioItem(
+        bar,
+        theme_id(0) as u32,
+        last_theme as u32,
+        theme_id(theme) as u32,
+        MF_BYCOMMAND,
+    );
     for (i, name) in font_list.iter().enumerate() {
-        check(bar, IDM_FONT_BASE + i as u16, name.eq_ignore_ascii_case(face));
+        check(
+            bar,
+            IDM_FONT_BASE + i as u16,
+            name.eq_ignore_ascii_case(face),
+        );
     }
     let is_listed = font_list.iter().any(|n| n.eq_ignore_ascii_case(face));
     check(bar, IDM_FONT_DIALOG, !is_listed);
@@ -144,22 +171,70 @@ pub unsafe fn update_checks(bar: HMENU, theme: usize, font_list: &[String], face
 }
 
 pub unsafe fn accelerators() -> HACCEL {
-    let ctrl = (FVIRTKEY | FCONTROL) as u8;
-    let ctrl_shift = (FVIRTKEY | FCONTROL | FSHIFT) as u8;
-    let alt = (FVIRTKEY | FALT) as u8;
+    let ctrl = FVIRTKEY | FCONTROL;
+    let ctrl_shift = FVIRTKEY | FCONTROL | FSHIFT;
+    let alt = FVIRTKEY | FALT;
     let table = [
-        ACCEL { fVirt: ctrl, key: b'N' as u16, cmd: IDM_NEW },
-        ACCEL { fVirt: ctrl, key: b'O' as u16, cmd: IDM_OPEN },
-        ACCEL { fVirt: ctrl, key: b'S' as u16, cmd: IDM_SAVE },
-        ACCEL { fVirt: ctrl_shift, key: b'S' as u16, cmd: IDM_SAVE_AS },
-        ACCEL { fVirt: ctrl_shift, key: b'D' as u16, cmd: IDM_TOGGLE_DARK },
-        ACCEL { fVirt: alt, key: b'Z' as u16, cmd: IDM_WRAP },
-        ACCEL { fVirt: ctrl, key: VK_OEM_PLUS, cmd: IDM_FONT_BIGGER },
-        ACCEL { fVirt: ctrl, key: VK_ADD, cmd: IDM_FONT_BIGGER },
-        ACCEL { fVirt: ctrl, key: VK_OEM_MINUS, cmd: IDM_FONT_SMALLER },
-        ACCEL { fVirt: ctrl, key: VK_SUBTRACT, cmd: IDM_FONT_SMALLER },
-        ACCEL { fVirt: ctrl, key: b'0' as u16, cmd: IDM_FONT_RESET },
-        ACCEL { fVirt: ctrl, key: VK_NUMPAD0, cmd: IDM_FONT_RESET },
+        ACCEL {
+            fVirt: ctrl,
+            key: b'N' as u16,
+            cmd: IDM_NEW,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: b'O' as u16,
+            cmd: IDM_OPEN,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: b'S' as u16,
+            cmd: IDM_SAVE,
+        },
+        ACCEL {
+            fVirt: ctrl_shift,
+            key: b'S' as u16,
+            cmd: IDM_SAVE_AS,
+        },
+        ACCEL {
+            fVirt: ctrl_shift,
+            key: b'D' as u16,
+            cmd: IDM_TOGGLE_DARK,
+        },
+        ACCEL {
+            fVirt: alt,
+            key: b'Z' as u16,
+            cmd: IDM_WRAP,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_OEM_PLUS,
+            cmd: IDM_FONT_BIGGER,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_ADD,
+            cmd: IDM_FONT_BIGGER,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_OEM_MINUS,
+            cmd: IDM_FONT_SMALLER,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_SUBTRACT,
+            cmd: IDM_FONT_SMALLER,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: b'0' as u16,
+            cmd: IDM_FONT_RESET,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_NUMPAD0,
+            cmd: IDM_FONT_RESET,
+        },
     ];
     CreateAcceleratorTableW(table.as_ptr(), table.len() as i32)
 }
@@ -184,7 +259,13 @@ unsafe fn append(menu: HMENU, id: u16, label: &str) {
 
 unsafe fn insert_submenu(menu: HMENU, position: u32, submenu: HMENU, label: &str) {
     let label = wide(label);
-    InsertMenuW(menu, position, MF_BYPOSITION | MF_POPUP, submenu as usize, label.as_ptr());
+    InsertMenuW(
+        menu,
+        position,
+        MF_BYPOSITION | MF_POPUP,
+        submenu as usize,
+        label.as_ptr(),
+    );
 }
 
 unsafe fn check(bar: HMENU, id: u16, is_on: bool) {

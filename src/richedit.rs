@@ -1,5 +1,5 @@
 //! The RichEdit definitions z++ uses, from Richedit.h. windows-sys 0.61 no longer ships them.
-#![allow(non_snake_case, dead_code)]
+#![allow(non_snake_case, dead_code, clippy::upper_case_acronyms)]
 
 const WM_USER: u32 = 0x0400;
 

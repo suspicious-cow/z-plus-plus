@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
 use windows_sys::w;
 use windows_sys::Win32::Foundation::*;
-use windows_sys::Win32::Graphics::Gdi::{GetDC, GetDeviceCaps, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, LOGPIXELSY};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetDC, GetDeviceCaps, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, LOGPIXELSY,
+};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryW};
 use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -78,7 +80,9 @@ fn colors() -> Colors {
 }
 
 fn theme_or(name: &str, fallback: &str) -> usize {
-    themes::index_of(name).or_else(|| themes::index_of(fallback)).unwrap_or(0)
+    themes::index_of(name)
+        .or_else(|| themes::index_of(fallback))
+        .unwrap_or(0)
 }
 
 pub unsafe fn run(path: Option<PathBuf>) -> i32 {
@@ -103,9 +107,18 @@ pub unsafe fn run(path: Option<PathBuf>) -> i32 {
     RegisterClassExW(&wc);
     let title = wide(APP_NAME);
     let hwnd = CreateWindowExW(
-        0, class, title.as_ptr(), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, CW_USEDEFAULT, DEFAULT_WIDTH, DEFAULT_HEIGHT,
-        null_mut(), menu::build(&windows_fonts), hinst, null(),
+        0,
+        class,
+        title.as_ptr(),
+        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        DEFAULT_WIDTH,
+        DEFAULT_HEIGHT,
+        null_mut(),
+        menu::build(&windows_fonts),
+        hinst,
+        null(),
     );
     if hwnd.is_null() {
         return 1;
@@ -124,7 +137,11 @@ unsafe fn load_prefs(windows_fonts: &[&str]) {
         .map(|f| f.to_string())
         .chain(fonts::BUNDLED.iter().map(|b| b.family.to_string()))
         .collect();
-    let face = if fonts::is_available(&p.face) { p.face } else { fonts::DEFAULT_FACE.to_string() };
+    let face = if fonts::is_available(&p.face) {
+        p.face
+    } else {
+        fonts::DEFAULT_FACE.to_string()
+    };
     app(|a| {
         a.theme.set(theme_or(&p.theme, themes::LIGHT));
         a.last_light.set(theme_or(&p.last_light, themes::LIGHT));
@@ -243,7 +260,14 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
 }
 
 unsafe fn layout() {
-    let (main, edit, bar, is_toolbar) = app(|a| (a.main.get(), a.edit.get(), a.toolbar.get(), a.is_toolbar.get()));
+    let (main, edit, bar, is_toolbar) = app(|a| {
+        (
+            a.main.get(),
+            a.edit.get(),
+            a.toolbar.get(),
+            a.is_toolbar.get(),
+        )
+    });
     if edit.is_null() {
         return;
     }
@@ -311,7 +335,9 @@ unsafe fn on_list_command(id: u16) -> bool {
         return true;
     }
     let count = app(|a| a.font_list.borrow().len());
-    let Some(index) = menu::font_index(id, count) else { return false };
+    let Some(index) = menu::font_index(id, count) else {
+        return false;
+    };
     let face = app(|a| a.font_list.borrow()[index].clone());
     set_face(face);
     true
@@ -320,10 +346,25 @@ unsafe fn on_list_command(id: u16) -> bool {
 /// Applies the current colors and font everywhere, then refreshes the menus and toolbar.
 unsafe fn apply_look() {
     let colors = colors();
-    let (main, edit, face, size) = app(|a| (a.main.get(), a.edit.get(), a.face.borrow().clone(), a.size.get()));
+    let (main, edit, face, size) = app(|a| {
+        (
+            a.main.get(),
+            a.edit.get(),
+            a.face.borrow().clone(),
+            a.size.get(),
+        )
+    });
     let paint = theme::Paint::new(colors);
     app(|a| *a.paint.borrow_mut() = Some(paint));
-    theme::apply(main, edit, &theme::Look { colors, face: &face, size_tenths: size });
+    theme::apply(
+        main,
+        edit,
+        &theme::Look {
+            colors,
+            face: &face,
+            size_tenths: size,
+        },
+    );
     sync_controls();
 }
 
@@ -333,7 +374,14 @@ unsafe fn sync_controls() {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();
         let bar = GetMenu(a.main.get());
-        menu::update_checks(bar, a.theme.get(), &font_list, &face, a.is_wrap.get(), a.is_toolbar.get());
+        menu::update_checks(
+            bar,
+            a.theme.get(),
+            &font_list,
+            &face,
+            a.is_wrap.get(),
+            a.is_toolbar.get(),
+        );
         toolbar::sync(&toolbar::State {
             colors,
             theme: a.theme.get(),
@@ -348,18 +396,32 @@ unsafe fn sync_controls() {
 unsafe fn set_theme(index: usize) {
     app(|a| a.theme.set(index));
     let is_dark = themes::is_dark(colors().bg);
-    app(|a| if is_dark { a.last_dark.set(index) } else { a.last_light.set(index) });
+    app(|a| {
+        if is_dark {
+            a.last_dark.set(index)
+        } else {
+            a.last_light.set(index)
+        }
+    });
     apply_look();
 }
 
 /// Switches to the last light theme used, or the last dark one.
 unsafe fn toggle_dark() {
     let (is_dark, light, dark, custom) = app(|a| {
-        (themes::is_dark(themes::colors_of(a.theme.get(), a.custom.get()).bg), a.last_light.get(), a.last_dark.get(), a.custom.get())
+        (
+            themes::is_dark(themes::colors_of(a.theme.get(), a.custom.get()).bg),
+            a.last_light.get(),
+            a.last_dark.get(),
+            a.custom.get(),
+        )
     });
     let mut target = if is_dark { light } else { dark };
     if themes::is_dark(themes::colors_of(target, custom).bg) == is_dark {
-        target = theme_or(if is_dark { themes::LIGHT } else { themes::DARK }, themes::LIGHT);
+        target = theme_or(
+            if is_dark { themes::LIGHT } else { themes::DARK },
+            themes::LIGHT,
+        );
     }
     set_theme(target);
 }
@@ -377,7 +439,17 @@ unsafe fn pick_color(is_text: bool) {
     if ChooseColorW(&mut cc) == 0 {
         return;
     }
-    let picked = if is_text { Colors { fg: cc.rgbResult, ..current } } else { Colors { bg: cc.rgbResult, ..current } };
+    let picked = if is_text {
+        Colors {
+            fg: cc.rgbResult,
+            ..current
+        }
+    } else {
+        Colors {
+            bg: cc.rgbResult,
+            ..current
+        }
+    };
     app(|a| {
         *a.custom_colors.borrow_mut() = custom_colors;
         a.custom.set(picked);
@@ -404,7 +476,7 @@ unsafe fn font_dialog() {
     ReleaseDC(null_mut(), screen);
     let mut lf: LOGFONTW = zeroed();
     lf.lfHeight = -(((size * dpi + TENTHS_PER_INCH / 2) / TENTHS_PER_INCH) as i32);
-    lf.lfCharSet = DEFAULT_CHARSET as u8;
+    lf.lfCharSet = DEFAULT_CHARSET;
     let units: Vec<u16> = face.encode_utf16().take(lf.lfFaceName.len() - 1).collect();
     lf.lfFaceName[..units.len()].copy_from_slice(&units);
     let mut cf: CHOOSEFONTW = zeroed();
@@ -412,12 +484,20 @@ unsafe fn font_dialog() {
     cf.hwndOwner = main;
     cf.lpLogFont = &mut lf;
     cf.iPointSize = size as i32;
-    cf.Flags = CF_INITTOLOGFONTSTRUCT | CF_NOVERTFONTS | CF_FORCEFONTEXIST | CF_NOSCRIPTSEL | CF_SCREENFONTS;
+    cf.Flags = CF_INITTOLOGFONTSTRUCT
+        | CF_NOVERTFONTS
+        | CF_FORCEFONTEXIST
+        | CF_NOSCRIPTSEL
+        | CF_SCREENFONTS;
     if ChooseFontW(&mut cf) == 0 {
         sync_controls();
         return;
     }
-    let len = lf.lfFaceName.iter().position(|&c| c == 0).unwrap_or(lf.lfFaceName.len());
+    let len = lf
+        .lfFaceName
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(lf.lfFaceName.len());
     app(|a| {
         *a.face.borrow_mut() = String::from_utf16_lossy(&lf.lfFaceName[..len]);
         a.size.set(fonts::clamp_size(cf.iPointSize.max(0) as u32));
@@ -450,7 +530,8 @@ unsafe fn show_licenses() {
     if let Err(e) = std::fs::write(&path, fonts::licenses_text()) {
         return error_box(&format!("Could not write {}:\n{e}", path.display()));
     }
-    let spawned = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg(&path).spawn());
+    let spawned =
+        std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg(&path).spawn());
     if let Err(e) = spawned {
         error_box(&format!("Could not open {}:\n{e}", path.display()));
     }
@@ -492,7 +573,12 @@ unsafe fn load(path: &Path) {
     };
     let (text, format) = match file::decode(&bytes) {
         Ok(decoded) => decoded,
-        Err(why) => return error_box(&format!("z++ will not open {} because {why}.", path.display())),
+        Err(why) => {
+            return error_box(&format!(
+                "z++ will not open {} because {why}.",
+                path.display()
+            ))
+        }
     };
     app(|a| {
         editor::set_text(a.edit.get(), &text);
@@ -546,7 +632,12 @@ unsafe fn confirm_discard() -> bool {
     }
     let text = wide(&format!("Save changes to {}?", display_name()));
     let caption = wide(APP_NAME);
-    let choice = MessageBoxW(app(|a| a.main.get()), text.as_ptr(), caption.as_ptr(), MB_YESNOCANCEL | MB_ICONWARNING);
+    let choice = MessageBoxW(
+        app(|a| a.main.get()),
+        text.as_ptr(),
+        caption.as_ptr(),
+        MB_YESNOCANCEL | MB_ICONWARNING,
+    );
     match choice {
         IDYES => cmd_save(),
         IDNO => true,
@@ -564,7 +655,9 @@ unsafe fn file_dialog(is_save: bool) -> Option<PathBuf> {
             let n = name.len().min(PATH_BUF_LEN - 1);
             buf[..n].copy_from_slice(&name[..n]);
         }
-        initial_dir = p.parent().map(|d| d.as_os_str().encode_wide().chain([0]).collect());
+        initial_dir = p
+            .parent()
+            .map(|d| d.as_os_str().encode_wide().chain([0]).collect());
     }
     let filter: Vec<u16> = FILE_FILTER.encode_utf16().collect();
     let mut ofn: OPENFILENAMEW = zeroed();
@@ -592,10 +685,14 @@ unsafe fn file_dialog(is_save: bool) -> Option<PathBuf> {
 
 fn display_name() -> String {
     app(|a| {
-        a.path.borrow().as_ref().and_then(|p| p.file_name()).map_or_else(
-            || UNTITLED.to_string(),
-            |n| n.to_string_lossy().into_owned(),
-        )
+        a.path
+            .borrow()
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map_or_else(
+                || UNTITLED.to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            )
     })
 }
 
@@ -620,5 +717,10 @@ unsafe fn info_box(text: &str) {
 unsafe fn message_box(text: &str, style: MESSAGEBOX_STYLE) {
     let text = wide(text);
     let caption = wide(APP_NAME);
-    MessageBoxW(app(|a| a.main.get()), text.as_ptr(), caption.as_ptr(), style);
+    MessageBoxW(
+        app(|a| a.main.get()),
+        text.as_ptr(),
+        caption.as_ptr(),
+        style,
+    );
 }
