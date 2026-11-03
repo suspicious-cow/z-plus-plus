@@ -14,6 +14,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+use crate::gdi::{draw_frame, draw_text, fill, round_fill, text_width};
 use crate::menu::*;
 use crate::themes::{self, Colors};
 use crate::{fonts, wide};
@@ -137,6 +138,7 @@ const GROUPS: &[Group] = &[
             large(IDM_COPY, 0xE8C8, "Copy", "Copy (Ctrl+C)"),
             large(IDM_PASTE, 0xE77F, "Paste", "Paste (Ctrl+V)"),
             large(IDM_SELECT_ALL, 0xE8B3, "Select All", "Select All (Ctrl+A)"),
+            large(IDM_FIND, 0xE721, "Find", "Find (Ctrl+F), Replace (Ctrl+H)"),
         ]],
     },
     Group {
@@ -436,16 +438,6 @@ unsafe fn item_width(hdc: HDC, item: &Item) -> i32 {
             }
         }
     }
-}
-
-unsafe fn text_width(hdc: HDC, text: &str) -> i32 {
-    if text.is_empty() {
-        return 0;
-    }
-    let units: Vec<u16> = text.encode_utf16().collect();
-    let mut size: SIZE = zeroed();
-    GetTextExtentPoint32W(hdc, units.as_ptr(), units.len() as i32, &mut size);
-    size.cx
 }
 
 unsafe fn create_combo(
@@ -824,30 +816,6 @@ unsafe fn draw_theme_item(toolbar: HWND, dis: &DRAWITEMSTRUCT) {
     }
 }
 
-unsafe fn draw_frame(hdc: HDC, rc: &RECT, color: u32, width: i32) {
-    let edges = [
-        RECT {
-            bottom: rc.top + width,
-            ..*rc
-        },
-        RECT {
-            top: rc.bottom - width,
-            ..*rc
-        },
-        RECT {
-            right: rc.left + width,
-            ..*rc
-        },
-        RECT {
-            left: rc.right - width,
-            ..*rc
-        },
-    ];
-    for edge in &edges {
-        fill(hdc, edge, color);
-    }
-}
-
 unsafe fn paint(hwnd: HWND) {
     let mut ps: PAINTSTRUCT = zeroed();
     let hdc = BeginPaint(hwnd, &mut ps);
@@ -899,7 +867,12 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
     let is_on = id == IDM_WRAP && is_wrap;
     if is_down || is_hot || is_on {
         let mix = if is_down { DOWN_MIX } else { HOT_MIX };
-        round_fill(hdc, &rect, themes::mix(colors.bg, colors.fg, mix));
+        round_fill(
+            hdc,
+            &rect,
+            themes::mix(colors.bg, colors.fg, mix),
+            s(CORNER),
+        );
     }
     let is_dark = themes::is_dark(colors.bg);
     let (glyph, label) = match id {
@@ -1024,34 +997,4 @@ unsafe fn draw_groups(hdc: HDC, rc: &RECT, colors: Colors) {
             );
         }
     }
-}
-
-unsafe fn draw_text(hdc: HDC, font: HFONT, text: &[u16], rect: &mut RECT, flags: u32) {
-    let old = SelectObject(hdc, font as HGDIOBJ);
-    DrawTextW(hdc, text.as_ptr(), text.len() as i32, rect, flags);
-    SelectObject(hdc, old);
-}
-
-unsafe fn fill(hdc: HDC, rect: &RECT, color: u32) {
-    let brush = CreateSolidBrush(color);
-    FillRect(hdc, rect, brush);
-    DeleteObject(brush as HGDIOBJ);
-}
-
-unsafe fn round_fill(hdc: HDC, rect: &RECT, color: u32) {
-    let brush = CreateSolidBrush(color);
-    let old_brush = SelectObject(hdc, brush as HGDIOBJ);
-    let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    RoundRect(
-        hdc,
-        rect.left,
-        rect.top,
-        rect.right,
-        rect.bottom,
-        s(CORNER),
-        s(CORNER),
-    );
-    SelectObject(hdc, old_pen);
-    SelectObject(hdc, old_brush);
-    DeleteObject(brush as HGDIOBJ);
 }

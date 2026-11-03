@@ -6,6 +6,20 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Tabs, one per open file, each with its own undo history. Ctrl+W closes a tab, Ctrl+Tab switches, a dot marks unsaved changes.
+- One z++ window: files opened from Explorer while z++ runs open as tabs there. `--new-window` opens a separate window.
+- Find, Find Next/Previous (F3, Shift+F3), Replace, Replace All as one undo step, and Go to Line (Ctrl+G).
+- A status bar with line and column, selection size, zoom, line endings and encoding; clicking the last two changes them.
+- Format > Encoding and Format > Line Endings convert the file on its next save.
+- File > Recent Files, Save All, opening several files at once, and dragging files onto the window.
+- z++ reopens last time's files and window position.
+- Files changed by another program reload when you return to z++; tabs with unsaved edits ask first.
+- If z++ ever crashes, it says why and saves the report to `%TEMP%\zpp-crash.txt`.
+
+### Changed
+
+- Saving writes a temporary file and swaps it in, so an interrupted save cannot leave a half-written file.
+
 - 19 more themes, so z++ now has every theme that ships with Notepad++ (their default text and background colors), 32 in all.
 - Live theme preview: pointing at a theme in View > Theme or the toolbar's theme list shows it in the whole window; Escape or moving away goes back.
 - The theme list draws each theme in its own colors, and View > Theme groups light and dark themes in columns.

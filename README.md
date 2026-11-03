@@ -6,15 +6,21 @@ A small, fast plain text editor for Windows, written in Rust. It runs natively o
 
 z++ is one exe. There is no installer and no runtime to install. It talks to the Win32 API directly and edits text with the Windows RichEdit control, so it opens fast and stays small.
 
-The project is early. It edits plain text well, but it is not a code editor: there is no syntax highlighting, no tabs and no find and replace yet. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
+The project is early. It edits plain text well, but it is not a code editor: there is no syntax highlighting. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 
 ## Features
 
-- New, Open, Save and Save As. Pass a file on the command line to open it: `zpp.exe notes.txt`.
-- Files keep their encoding (UTF-8, UTF-8 with BOM, UTF-16 LE or ANSI) and their LF line endings. z++ refuses to open a file it could not save back unchanged, such as a binary file, instead of damaging it.
+- Tabs: each open file gets a tab with its own undo history. A dot on a tab means unsaved changes. Opening a file that is already open switches to its tab, and a file opened from Explorer while z++ is running opens as a new tab in that window (`zpp.exe --new-window` opens a second window instead).
+- New, Open (several files at once), Save, Save As, Save All. Drag files onto the window to open them.
+- z++ reopens last time's files and window size on start, and keeps the last 10 files under File > Recent Files.
+- Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
+- If another program changes an open file, z++ reloads it when you come back. If you have unsaved edits in that tab, it asks first.
+- Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line.
+- A status bar with line and column, the selection size, zoom, line endings and encoding. Click the encoding or line endings to change them; Format > Encoding and Format > Line Endings do the same.
+- Files keep their encoding (UTF-8, UTF-8 with BOM, UTF-16 LE or ANSI) and their LF line endings unless you change them. z++ refuses to open a file it could not save back unchanged, such as a binary file, instead of damaging it.
 - 32 color themes, including all 22 that ship with Notepad++, plus your own text and background colors. Point at a theme in View > Theme or in the toolbar's theme list and the whole window shows it right away; move off it or press Escape to go back. Dark themes also darken the title bar, menus and scroll bars.
 - 11 open-licensed monospace fonts built into the exe, the usual Windows monospace fonts, and any font installed on the machine.
-- A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, font, size, colors, theme and word wrap. View > Toolbar hides it.
+- A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, find, font, size, colors, theme and word wrap. View > Toolbar and View > Status Bar hide those bars.
 - Settings are saved per user under `HKCU\Software\z++`.
 
 | Solarized Light with Fira Mono | Nord with JetBrains Mono |
@@ -37,10 +43,15 @@ The exe is not code-signed yet, so Windows SmartScreen may warn the first time y
 
 | Action | Keys |
 | --- | --- |
-| New, Open, Save | Ctrl+N, Ctrl+O, Ctrl+S |
+| New tab, Open, Save | Ctrl+N, Ctrl+O, Ctrl+S |
 | Save As | Ctrl+Shift+S |
+| Close tab | Ctrl+W, or middle-click the tab |
+| Next, previous tab | Ctrl+Tab, Ctrl+Shift+Tab (or Ctrl+PgDn, Ctrl+PgUp) |
 | Undo, Redo | Ctrl+Z, Ctrl+Y |
 | Cut, Copy, Paste, Select All | Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A |
+| Find, Replace | Ctrl+F, Ctrl+H |
+| Find next, previous | F3, Shift+F3 |
+| Go to line | Ctrl+G |
 | Bigger, smaller, reset font size | Ctrl+=, Ctrl+-, Ctrl+0 |
 | Word wrap | Alt+Z |
 | Switch between your last light and dark theme | Ctrl+Shift+D |
@@ -70,11 +81,17 @@ Run the tests with `cargo test`.
 
 | File | What it does |
 | --- | --- |
-| [src/window.rs](src/window.rs) | Main window, commands, open and save |
+| [src/window.rs](src/window.rs) | Main window, layout, commands, themes and fonts |
+| [src/docs.rs](src/docs.rs) | Open files: tabs, open, save, close, reload, recent files, session |
 | [src/toolbar.rs](src/toolbar.rs) | The toolbar, drawn in the current theme's colors |
+| [src/tabs.rs](src/tabs.rs) | The tab strip |
+| [src/statusbar.rs](src/statusbar.rs) | The status bar |
+| [src/find.rs](src/find.rs) | Find and Replace |
+| [src/dialog.rs](src/dialog.rs) | The Go to Line dialog |
+| [src/gdi.rs](src/gdi.rs) | Drawing helpers shared by the toolbar, tabs and status bar |
 | [src/menu.rs](src/menu.rs) | Menu bar, command IDs, keyboard shortcuts |
 | [src/editor.rs](src/editor.rs) | The RichEdit control in plain-text mode |
-| [src/file.rs](src/file.rs) | Reading and writing encodings and line endings |
+| [src/file.rs](src/file.rs) | Reading and writing encodings and line endings, safe save |
 | [src/themes.rs](src/themes.rs) | Theme presets and color math |
 | [src/theme.rs](src/theme.rs) | Applying colors and fonts to the window, dark menu bar painting |
 | [src/fonts.rs](src/fonts.rs) | Bundled fonts and the font list |

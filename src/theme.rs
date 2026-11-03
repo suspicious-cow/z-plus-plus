@@ -132,13 +132,7 @@ pub unsafe fn apply(main: HWND, edit: HWND, look: &Look) {
         &flag as *const i32 as *const c_void,
         4,
     );
-    let scroll_theme = if is_dark {
-        w!("DarkMode_Explorer")
-    } else {
-        w!("Explorer")
-    };
-    SetWindowTheme(edit, scroll_theme, null());
-    apply_editor(edit, look);
+    style_editor(edit, look);
     DrawMenuBar(main);
     RedrawWindow(
         main,
@@ -146,6 +140,17 @@ pub unsafe fn apply(main: HWND, edit: HWND, look: &Look) {
         null_mut(),
         RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN,
     );
+}
+
+/// Colors, font and scroll bars of one editor; each tab has its own editor control.
+pub unsafe fn style_editor(edit: HWND, look: &Look) {
+    let scroll_theme = if themes::is_dark(look.colors.bg) {
+        w!("DarkMode_Explorer")
+    } else {
+        w!("Explorer")
+    };
+    SetWindowTheme(edit, scroll_theme, null());
+    apply_editor(edit, look);
 }
 
 unsafe fn apply_editor(edit: HWND, look: &Look) {

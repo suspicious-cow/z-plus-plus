@@ -3,7 +3,15 @@
 
 const WM_USER: u32 = 0x0400;
 
+pub const EM_EXGETSEL: u32 = WM_USER + 52;
 pub const EM_EXLIMITTEXT: u32 = WM_USER + 53;
+pub const EM_EXLINEFROMCHAR: u32 = WM_USER + 54;
+pub const EM_EXSETSEL: u32 = WM_USER + 55;
+pub const EM_GETSELTEXT: u32 = WM_USER + 62;
+pub const EM_GETTEXTRANGE: u32 = WM_USER + 75;
+pub const EM_SETTEXTEX: u32 = WM_USER + 97;
+pub const EM_FINDTEXTEXW: u32 = WM_USER + 124;
+pub const EM_GETZOOM: u32 = WM_USER + 224;
 pub const EM_SETBKGNDCOLOR: u32 = WM_USER + 67;
 pub const EM_SETCHARFORMAT: u32 = WM_USER + 68;
 pub const EM_SETEVENTMASK: u32 = WM_USER + 69;
@@ -20,6 +28,19 @@ pub const TM_MULTILEVELUNDO: u32 = 8;
 pub const TM_MULTICODEPAGE: u32 = 32;
 
 pub const ENM_CHANGE: u32 = 0x0000_0001;
+pub const ENM_SELCHANGE: u32 = 0x0008_0000;
+pub const EN_SELCHANGE: u32 = 0x0702;
+pub const ENM_DROPFILES: u32 = 0x0010_0000;
+pub const EN_DROPFILES: u32 = 0x0703;
+
+/// EM_FINDTEXTEXW flags, the same values as the common dialog's FR_* flags.
+pub const FR_DOWN: u32 = 0x0001;
+pub const FR_WHOLEWORD: u32 = 0x0002;
+pub const FR_MATCHCASE: u32 = 0x0004;
+
+pub const ST_KEEPUNDO: u32 = 1;
+pub const GT_DEFAULT: u32 = 0;
+pub const GTL_DEFAULT: u32 = 0;
 
 pub const IMF_AUTOFONT: u32 = 0x0002;
 pub const IMF_DUALFONT: u32 = 0x0080;
@@ -60,6 +81,41 @@ pub struct GETTEXTEX {
 
 #[repr(C)]
 pub struct GETTEXTLENGTHEX {
+    pub flags: u32,
+    pub codepage: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct CHARRANGE {
+    pub cpMin: i32,
+    pub cpMax: i32,
+}
+
+#[repr(C)]
+pub struct FINDTEXTEXW {
+    pub chrg: CHARRANGE,
+    pub lpstrText: *const u16,
+    pub chrgText: CHARRANGE,
+}
+
+#[repr(C)]
+pub struct TEXTRANGEW {
+    pub chrg: CHARRANGE,
+    pub lpstrText: *mut u16,
+}
+
+/// EN_DROPFILES notification data.
+#[repr(C)]
+pub struct ENDROPFILES {
+    pub nmhdr: windows_sys::Win32::UI::Controls::NMHDR,
+    pub hDrop: *mut core::ffi::c_void,
+    pub cp: i32,
+    pub fProtected: i32,
+}
+
+#[repr(C)]
+pub struct SETTEXTEX {
     pub flags: u32,
     pub codepage: u32,
 }
