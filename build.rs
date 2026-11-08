@@ -47,19 +47,22 @@ fn main() {
     let dir = PathBuf::from(env("CARGO_MANIFEST_DIR"));
     embed_manifest(&dir);
     embed_resources(&dir);
-    compile_scintilla(&dir.join("vendor"));
+    compile_scintilla(&dir.join("vendor"), &dir.join("native"));
 }
 
 /// Scintilla (the editing control) and Lexilla (syntax highlighting), linked into zpp.exe.
-fn compile_scintilla(vendor: &Path) {
+/// native/lexers.cxx stands in for Lexilla's own catalogue so only the lexers z++ uses are
+/// linked; the other lexers compile into the library but the linker leaves them out.
+fn compile_scintilla(vendor: &Path, native: &Path) {
     println!("cargo:rerun-if-changed=vendor");
+    println!("cargo:rerun-if-changed=native");
     let sci = vendor.join("scintilla");
     let lex = vendor.join("lexilla");
     let mut files = cxx_files(&sci.join("src"));
     files.extend(SCINTILLA_WIN32.iter().map(|f| sci.join("win32").join(f)));
     files.extend(cxx_files(&lex.join("lexlib")));
     files.extend(cxx_files(&lex.join("lexers")));
-    files.push(lex.join("src").join("Lexilla.cxx"));
+    files.push(native.join("lexers.cxx"));
     cc::Build::new()
         .cpp(true)
         .std("c++17")
@@ -71,8 +74,6 @@ fn compile_scintilla(vendor: &Path) {
         .define("UNICODE", None)
         .define("_UNICODE", None)
         .define("NDEBUG", None)
-        // Lexilla is linked in, not a DLL: keep zpp.exe from exporting its functions.
-        .define("LEXILLA_NO_EXPORT", None)
         .flag("/EHsc")
         .flag("/utf-8")
         .warnings(false)

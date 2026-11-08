@@ -578,6 +578,15 @@ mod tests {
     }
 
     #[test]
+    fn every_lexer_is_in_the_catalogue() {
+        for l in LANGUAGES {
+            let name: Vec<u8> = l.lexer.bytes().chain([0]).collect();
+            let lexer = unsafe { crate::sci::CreateLexer(name.as_ptr()) };
+            assert!(!lexer.is_null(), "{} is not in native/lexers.cxx", l.lexer);
+        }
+    }
+
+    #[test]
     fn lowercase_keywords_for_lexers_that_lowercase() {
         for l in LANGUAGES
             .iter()

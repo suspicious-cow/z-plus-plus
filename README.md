@@ -109,7 +109,7 @@ cargo build --release --target x86_64-pc-windows-msvc
 
 The exe lands in `target\<target>\release\zpp.exe`. The C runtime is linked statically, so the exe runs on a clean Windows 11 machine.
 
-To leave the bundled fonts out, build with `--no-default-features`. On the development machine (Windows 11 ARM64, measured 2026-11-07), the ARM64 release exe was 3.2 MB with the fonts and 1.3 MB without them. Scintilla and Lexilla account for most of the second number.
+To leave the bundled fonts out, build with `--no-default-features`. On the development machine (Windows 11 ARM64, measured 2026-11-07), the ARM64 release exe was 4.5 MB with the fonts and 2.6 MB without them. Scintilla, the Lexilla lexers and the regex engine for Find in Files account for most of the second number. Only the lexers listed in [native/lexers.cxx](native/lexers.cxx) are linked in.
 
 Run the tests with `cargo test`.
 
