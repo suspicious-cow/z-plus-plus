@@ -6,6 +6,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Find in Files (Ctrl+Shift+F) with a file filter, match case, whole word and regular expressions. It searches on a background thread, skips build and dependency folders and binary files, and lists hits in a panel under the text; double-click a hit to open it. View > Search Results hides the panel.
 - `zpp file:42` and `zpp file:42:7` open a file at a line and column, the form compilers and coding agents print.
 - `zpp --wait` returns only once the file's tab is closed, so z++ can be the editor for git and other tools.
 - Files changed by another program now reload without waiting for you to switch back to z++. Only the lines that differ are replaced, so the caret and scroll position stay put and Undo goes back. A margin marks changed lines.

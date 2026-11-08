@@ -35,6 +35,8 @@ pub const IDM_TOOLBAR: u16 = 124;
 pub const IDM_GOTO: u16 = 125;
 pub const IDM_STATUS_BAR: u16 = 126;
 pub const IDM_LINE_NUMBERS: u16 = 127;
+pub const IDM_FIND_IN_FILES: u16 = 128;
+pub const IDM_RESULTS: u16 = 129;
 pub const IDM_FONT_DIALOG: u16 = 130;
 pub const IDM_FONT_BIGGER: u16 = 131;
 pub const IDM_FONT_SMALLER: u16 = 132;
@@ -94,6 +96,7 @@ pub struct Checks<'a> {
     pub is_toolbar: bool,
     pub is_status_bar: bool,
     pub is_line_numbers: bool,
+    pub is_results: bool,
     pub format: Format,
     pub language: Option<usize>,
 }
@@ -166,6 +169,7 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (IDM_FIND_NEXT, "Find &Next\tF3"),
         (IDM_FIND_PREV, "Find Pre&vious\tShift+F3"),
         (IDM_REPLACE, "R&eplace...\tCtrl+H"),
+        (IDM_FIND_IN_FILES, "Find in F&iles...\tCtrl+Shift+F"),
         (IDM_GOTO, "&Go to Line...\tCtrl+G"),
         SEPARATOR,
         (IDM_SELECT_ALL, "Select &All\tCtrl+A"),
@@ -197,6 +201,7 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (IDM_TOOLBAR, "Tool&bar"),
         (IDM_STATUS_BAR, "&Status Bar"),
         (IDM_LINE_NUMBERS, "Line &Numbers"),
+        (IDM_RESULTS, "Search &Results"),
         SEPARATOR,
         (IDM_NEXT_TAB, "&Next Tab\tCtrl+Tab"),
         (IDM_PREV_TAB, "&Previous Tab\tCtrl+Shift+Tab"),
@@ -315,6 +320,7 @@ pub unsafe fn update_checks(bar: HMENU, c: &Checks) {
     check(bar, IDM_TOOLBAR, c.is_toolbar);
     check(bar, IDM_STATUS_BAR, c.is_status_bar);
     check(bar, IDM_LINE_NUMBERS, c.is_line_numbers);
+    check(bar, IDM_RESULTS, c.is_results);
     check(bar, IDM_WRAP, c.is_wrap);
     let last_theme = theme_id(themes::PRESETS.len());
     CheckMenuRadioItem(
@@ -390,6 +396,7 @@ pub unsafe fn accelerators() -> HACCEL {
         acc(ctrl, VK_PRIOR, IDM_PREV_TAB),
         acc(ctrl, b'F' as u16, IDM_FIND),
         acc(ctrl, b'H' as u16, IDM_REPLACE),
+        acc(ctrl_shift, b'F' as u16, IDM_FIND_IN_FILES),
         acc(FVIRTKEY, VK_F3, IDM_FIND_NEXT),
         acc(shift, VK_F3, IDM_FIND_PREV),
         acc(ctrl, b'G' as u16, IDM_GOTO),

@@ -26,7 +26,8 @@ use crate::menu::*;
 use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors, Syntax};
 use crate::{
-    dialog, editor, find, fonts, menu, notice, prefs, statusbar, tabs, theme, toolbar, wait, wide,
+    dialog, editor, find, findfiles, fonts, menu, notice, prefs, results, statusbar, tabs, theme,
+    toolbar, wait, wide,
 };
 
 const APP_NAME: &str = "z++";
@@ -335,6 +336,10 @@ unsafe fn message_loop(hwnd: HWND) -> i32 {
         if !finder.is_null() && IsDialogMessageW(finder, &msg) != 0 {
             continue;
         }
+        let in_files = findfiles::dialog();
+        if !in_files.is_null() && IsDialogMessageW(in_files, &msg) != 0 {
+            continue;
+        }
         if TranslateAcceleratorW(hwnd, accel, &msg) != 0 {
             continue;
         }
@@ -380,6 +385,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         tabs::WM_APP_TAB => {
             on_tab(wparam, lparam as usize);
+            0
+        }
+        findfiles::WM_APP_SEARCH_DONE => {
+            findfiles::on_done(wparam, lparam);
             0
         }
         notice::WM_APP_NOTICE => {
@@ -462,6 +471,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// Notifications from the editors.
 unsafe fn on_notify(lparam: LPARAM) {
     let hdr = &*(lparam as *const NMHDR);
+    if hdr.hwndFrom == results::panel() {
+        if hdr.code == sci::SCN_DOUBLECLICK {
+            let n = &*(lparam as *const SCNotification);
+            results::open_line(n.line.max(0) as usize);
+        }
+        return;
+    }
     let is_active = hdr.hwndFrom == app(|a| a.edit.get());
     match hdr.code {
         sci::SCN_UPDATEUI if is_active => {
@@ -487,6 +503,7 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
     let strip = tabs::create(hwnd, hinst);
     let status = statusbar::create(hwnd, hinst);
     let notice = notice::create(hwnd, hinst);
+    results::create(hwnd, hinst);
     let (is_toolbar, is_status_bar) = app(|a| {
         a.main.set(hwnd);
         a.toolbar.set(bar);
@@ -538,10 +555,12 @@ pub unsafe fn layout() {
     let notice_h = notice::height();
     MoveWindow(notice, 0, bar_h + tabs_h, rc.right, notice_h, 1);
     let top = bar_h + tabs_h + notice_h;
-    let edit_h = (rc.bottom - top - status_h).max(0);
+    let results_h = results::height();
+    let edit_h = (rc.bottom - top - status_h - results_h).max(0);
     if !edit.is_null() {
         MoveWindow(edit, 0, top, rc.right, edit_h, 1);
     }
+    MoveWindow(results::panel(), 0, top + edit_h, rc.right, results_h, 1);
     MoveWindow(status, 0, rc.bottom - status_h, rc.right, status_h, 1);
 }
 
@@ -583,6 +602,18 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_COPY => editor::copy(edit),
         IDM_PASTE => editor::paste(edit),
         IDM_SELECT_ALL => editor::select_all(edit),
+        IDM_FIND_IN_FILES => {
+            findfiles::open(hwnd, edit);
+            return 0;
+        }
+        IDM_RESULTS => {
+            let is_shown = !results::is_shown();
+            if !is_shown {
+                findfiles::cancel();
+            }
+            results::show(is_shown);
+            layout();
+        }
         IDM_FIND | IDM_REPLACE => {
             find::open(hwnd, edit, id == IDM_REPLACE);
             return 0;
@@ -770,17 +801,17 @@ unsafe fn paint_look() {
     });
     let paint = theme::Paint::new(colors);
     app(|a| *a.paint.borrow_mut() = Some(paint));
-    theme::apply(
-        main,
-        edit,
-        &theme::Look {
-            colors,
-            syntax,
-            face: &face,
-            size_tenths: size,
-        },
-        language,
-    );
+    let look = theme::Look {
+        colors,
+        syntax,
+        face: &face,
+        size_tenths: size,
+    };
+    theme::apply(main, edit, &look, language);
+    if !results::panel().is_null() {
+        theme::style_editor(results::panel(), &look, None);
+        results::apply_syntax(&syntax);
+    }
     app(|a| {
         if let Some(doc) = a.docs.borrow_mut().get_mut(a.active.get()) {
             doc.look_gen = gen;
@@ -823,6 +854,7 @@ unsafe fn end_preview() {
 pub unsafe fn sync_menu_checks() {
     let format = docs::active_format();
     let language = app(|a| a.docs.borrow().get(a.active.get()).and_then(|d| d.language));
+    let is_results_shown = results::is_shown();
     app(|a| {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();
@@ -836,6 +868,7 @@ pub unsafe fn sync_menu_checks() {
                 is_toolbar: a.is_toolbar.get(),
                 is_status_bar: a.is_status_bar.get(),
                 is_line_numbers: a.is_line_numbers.get(),
+                is_results: is_results_shown,
                 format,
                 language,
             },

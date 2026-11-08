@@ -16,6 +16,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
 - If another program changes an open file, z++ reloads it, changing only the lines that differ and marking them in the margin. If you have unsaved edits in that tab, a bar above the text asks instead of a dialog. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
+- Find in Files (Ctrl+Shift+F): search a folder and its subfolders, with a file filter such as `*.rs;*.toml`. Version control, dependency and build folders (`.git`, `node_modules`, `target`, `.venv` and similar) are skipped, and so are binary files. The hits fill a panel under the text; double-click one to open the file at that spot. Regular expressions here use [Rust's regex syntax](https://docs.rs/regex/latest/regex/#syntax) (no backreferences or lookaround), which keeps searches fast on big folders.
 - Line numbers (View > Line Numbers).
 - Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line. Find and Replace can match case, whole words, or a regular expression (ECMAScript syntax), and a replacement can use the groups the expression captured as `\1` to `\9`.
 - A status bar with line and column, the selection size, zoom, line endings and encoding. Click the encoding or line endings to change them; Format > Encoding and Format > Line Endings do the same.
@@ -85,6 +86,7 @@ z++ also keeps up while an agent edits your files:
 | Cut, Copy, Paste, Select All | Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A |
 | Find, Replace | Ctrl+F, Ctrl+H |
 | Find next, previous | F3, Shift+F3 |
+| Find in Files | Ctrl+Shift+F |
 | Go to line | Ctrl+G |
 | Bigger, smaller, reset font size | Ctrl+=, Ctrl+-, Ctrl+0 |
 | Word wrap | Alt+Z |
@@ -121,6 +123,9 @@ Run the tests with `cargo test`.
 | [src/tabs.rs](src/tabs.rs) | The tab strip |
 | [src/statusbar.rs](src/statusbar.rs) | The status bar |
 | [src/find.rs](src/find.rs) | Find and Replace |
+| [src/findfiles.rs](src/findfiles.rs) | The Find in Files dialog |
+| [src/search.rs](src/search.rs) | Find in Files: walking the folder and matching, on a background thread |
+| [src/results.rs](src/results.rs) | The Find in Files results panel |
 | [src/dialog.rs](src/dialog.rs) | Dialog templates built in memory, and the Go to Line dialog |
 | [src/gdi.rs](src/gdi.rs) | Drawing helpers shared by the toolbar, tabs and status bar |
 | [src/menu.rs](src/menu.rs) | Menu bar, command IDs, keyboard shortcuts |
