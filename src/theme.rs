@@ -21,8 +21,9 @@ use windows_sys::Win32::UI::Controls::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+use crate::languages::{Language, Token};
 use crate::sci::*;
-use crate::themes::{self, Colors};
+use crate::themes::{self, Colors, Syntax, Tok};
 
 pub const WM_UAHDRAWMENU: u32 = 0x0091;
 pub const WM_UAHDRAWMENUITEM: u32 = 0x0092;
@@ -42,6 +43,7 @@ const APP_MODE_FORCE_LIGHT: i32 = 3;
 
 pub struct Look<'a> {
     pub colors: Colors,
+    pub syntax: Syntax,
     pub face: &'a str,
     pub size_tenths: u32,
 }
@@ -126,7 +128,7 @@ pub unsafe fn set_app_mode(is_dark: bool) {
     }
 }
 
-pub unsafe fn apply(main: HWND, edit: HWND, look: &Look) {
+pub unsafe fn apply(main: HWND, edit: HWND, look: &Look, language: Option<&Language>) {
     let is_dark = themes::is_dark(look.colors.bg);
     set_app_mode(is_dark);
     let flag: i32 = is_dark as i32;
@@ -136,7 +138,9 @@ pub unsafe fn apply(main: HWND, edit: HWND, look: &Look) {
         &flag as *const i32 as *const c_void,
         4,
     );
-    style_editor(edit, look);
+    if !edit.is_null() {
+        style_editor(edit, look, language);
+    }
     DrawMenuBar(main);
     RedrawWindow(
         main,
@@ -147,7 +151,8 @@ pub unsafe fn apply(main: HWND, edit: HWND, look: &Look) {
 }
 
 /// Colors, font and scroll bars of one editor; each tab has its own editor control.
-pub unsafe fn style_editor(edit: HWND, look: &Look) {
+/// `language` is the one the editor's lexer was set to (editor::set_lexer).
+pub unsafe fn style_editor(edit: HWND, look: &Look, language: Option<&Language>) {
     let scroll_theme = if themes::is_dark(look.colors.bg) {
         w!("DarkMode_Explorer")
     } else {
@@ -155,6 +160,28 @@ pub unsafe fn style_editor(edit: HWND, look: &Look) {
     };
     SetWindowTheme(edit, scroll_theme, null());
     apply_editor(edit, look);
+    if let Some(language) = language {
+        apply_syntax(edit, &look.syntax, language);
+    }
+}
+
+/// Colors the lexer's styles. Runs after STYLECLEARALL, which resets them to the text color.
+unsafe fn apply_syntax(edit: HWND, syntax: &Syntax, language: &Language) {
+    for &(style, token) in language.styles {
+        let tok: Tok = match token {
+            Token::Comment => syntax.comment,
+            Token::Keyword => syntax.keyword,
+            Token::Kind => syntax.kind,
+            Token::Str => syntax.string,
+            Token::Number => syntax.number,
+            Token::Operator => syntax.operator,
+            Token::Preproc => syntax.preprocessor,
+        };
+        let style = style as usize;
+        SendMessageW(edit, SCI_STYLESETFORE, style, tok.fg as isize);
+        SendMessageW(edit, SCI_STYLESETBOLD, style, tok.is_bold as isize);
+        SendMessageW(edit, SCI_STYLESETITALIC, style, tok.is_italic as isize);
+    }
 }
 
 unsafe fn apply_editor(edit: HWND, look: &Look) {

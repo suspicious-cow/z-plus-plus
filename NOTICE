@@ -1,8 +1,9 @@
 z++
 Copyright 2026 Zain Naboulsi
 
-The text and background colors of 22 themes are taken from the theme files that ship with
-Notepad++ (github.com/notepad-plus-plus/notepad-plus-plus, PowerEditor/installer/themes).
+The text, background and code colors of 22 themes are taken from the theme files that ship with
+Notepad++ (github.com/notepad-plus-plus/notepad-plus-plus, PowerEditor/installer/themes), and
+the Light theme's code colors from Notepad++'s default styles (PowerEditor/src/stylers.model.xml).
 Only those color values are used; no theme file is included.
 
 This product includes Scintilla 5.6.9 and Lexilla 5.5.5 (www.scintilla.org),

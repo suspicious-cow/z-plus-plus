@@ -6,6 +6,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Syntax highlighting for 24 languages, chosen by file name, with a Language menu to switch a tab to another language or plain text. Each theme colors code its own way: the Notepad++ themes use their own code colors, and the rest get colors computed to stay readable on their background.
 - Line numbers, on by default (View > Line Numbers).
 - Regular expressions in Find and Replace (ECMAScript syntax), with `\1` to `\9` in the replacement for captured groups. An invalid expression says so instead of finding nothing.
 - Tabs, one per open file, each with its own undo history. Ctrl+W closes a tab, Ctrl+Tab switches, a dot marks unsaved changes.

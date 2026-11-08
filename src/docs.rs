@@ -14,6 +14,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::editor::Span;
 use crate::file::{self, Encoding, Format, Stamp};
+use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
 use crate::{editor, menu, prefs, statusbar, tabs, theme};
 
@@ -30,6 +31,8 @@ pub struct Doc {
     stamp: Option<Stamp>,
     /// Which look (colors, font) the editor was last styled with; see window::paint_look.
     pub look_gen: u32,
+    /// Index into languages::LANGUAGES, or None for plain text.
+    pub language: Option<usize>,
     shown_modified: bool,
     /// Unsaved even though the text matches the file: it was deleted on disk, or the encoding
     /// changed. Scintilla's own modified state only follows edits to the text.
@@ -53,6 +56,23 @@ unsafe fn force_modified(index: usize) {
 /// Line numbers on or off, with the margin sized for the document's last line number.
 pub unsafe fn fit_margin(edit: HWND) {
     editor::show_line_numbers(edit, app(|a| a.is_line_numbers.get()));
+}
+
+pub fn language_of(index: usize) -> Option<&'static Language> {
+    languages::get(app(|a| a.docs.borrow().get(index).and_then(|d| d.language)))
+}
+
+/// Highlights tab `index` as `language` (None for plain text) and restyles it.
+pub unsafe fn set_language(index: usize, language: Option<usize>) {
+    let edit = edit_of(index);
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        docs[index].language = language;
+        docs[index].look_gen = 0;
+    });
+    editor::set_lexer(edit, languages::get(language));
+    style_if_stale(index);
+    refresh();
 }
 
 pub fn active_index() -> usize {
@@ -104,6 +124,7 @@ pub unsafe fn new_tab() -> usize {
             untitled,
             stamp: None,
             look_gen: 0,
+            language: None,
             shown_modified: false,
             is_forced_modified: false,
         });
@@ -141,15 +162,17 @@ unsafe fn style_if_stale(index: usize) {
     if app(|a| a.docs.borrow()[index].look_gen) == gen {
         return;
     }
-    let (colors, face, size) = window::look_parts();
+    let (colors, syntax, face, size) = window::look_parts();
     let edit = edit_of(index);
     theme::style_editor(
         edit,
         &theme::Look {
             colors,
+            syntax,
             face: &face,
             size_tenths: size,
         },
+        language_of(index),
     );
     fit_margin(edit);
     app(|a| a.docs.borrow_mut()[index].look_gen = gen);
@@ -297,6 +320,7 @@ pub unsafe fn open_path(path: &Path) -> bool {
         doc.is_forced_modified = false;
     });
     fit_margin(edit);
+    set_language(index, languages::for_path(&path));
     add_recent(&path);
     activate(index);
     if format.is_mixed_eol {
@@ -387,9 +411,9 @@ pub unsafe fn save_all() {
 }
 
 unsafe fn save_to(index: usize, path: &Path) -> bool {
-    let (edit, format) = app(|a| {
+    let (edit, format, is_new_path) = app(|a| {
         let d = &a.docs.borrow()[index];
-        (d.edit, d.format)
+        (d.edit, d.format, d.path.as_deref() != Some(path))
     });
     // Undoing a line-ending change, a regex replace or a paste can mix line endings back in.
     let text = file::normalize_line_breaks(&editor::text(edit), format.is_lf_only);
@@ -407,6 +431,9 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         doc.is_forced_modified = false;
     });
     editor::set_saved(edit);
+    if is_new_path {
+        set_language(index, languages::for_path(path));
+    }
     refresh();
     if used.encoding != format.encoding {
         info_box(&format!(

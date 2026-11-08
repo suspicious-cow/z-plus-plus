@@ -19,6 +19,7 @@ extern "system" {
 pub const ZPP_WM_FILES_DROPPED: u32 = windows_sys::Win32::UI::WindowsAndMessaging::WM_APP + 7;
 
 pub const SCI_ADDTEXT: u32 = 2001;
+pub const SCI_CLEARDOCUMENTSTYLE: u32 = 2005;
 pub const SCI_GETLENGTH: u32 = 2006;
 pub const SCI_GETCURRENTPOS: u32 = 2008;
 pub const SCI_GETANCHOR: u32 = 2009;

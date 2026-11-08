@@ -5,7 +5,7 @@ use std::ptr::null;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::file::{Encoding, Format};
-use crate::{fonts, themes, wide};
+use crate::{fonts, languages, themes, wide};
 
 pub const IDM_NEW: u16 = 100;
 pub const IDM_OPEN: u16 = 101;
@@ -51,6 +51,8 @@ pub const IDM_EOL_LF: u16 = 161;
 pub const IDM_THEME_BASE: u16 = 200;
 /// Font n of the Font menu list is IDM_FONT_BASE + n.
 pub const IDM_FONT_BASE: u16 = 300;
+/// Plain text is IDM_LANGUAGE_BASE; language n of languages::LANGUAGES is IDM_LANGUAGE_BASE + 1 + n.
+pub const IDM_LANGUAGE_BASE: u16 = 600;
 /// Recent file n is IDM_RECENT_BASE + n.
 pub const IDM_RECENT_BASE: u16 = 500;
 pub const MAX_RECENT: usize = 10;
@@ -93,6 +95,7 @@ pub struct Checks<'a> {
     pub is_status_bar: bool,
     pub is_line_numbers: bool,
     pub format: Format,
+    pub language: Option<usize>,
 }
 
 pub fn theme_id(index: usize) -> u16 {
@@ -114,6 +117,20 @@ pub fn font_index(id: u16, font_count: usize) -> Option<usize> {
 pub fn recent_index(id: u16) -> Option<usize> {
     let index = id.checked_sub(IDM_RECENT_BASE)? as usize;
     (index < MAX_RECENT).then_some(index)
+}
+
+/// For a Language menu command: Some(None) for plain text, Some(Some(n)) for language n.
+pub fn language_for(id: u16) -> Option<Option<usize>> {
+    let index = id.checked_sub(IDM_LANGUAGE_BASE)? as usize;
+    match index {
+        0 => Some(None),
+        n if n <= languages::LANGUAGES.len() => Some(Some(n - 1)),
+        _ => None,
+    }
+}
+
+fn language_id(language: Option<usize>) -> u16 {
+    IDM_LANGUAGE_BASE + language.map_or(0, |n| n as u16 + 1)
 }
 
 pub fn encoding_for(id: u16) -> Option<Encoding> {
@@ -190,6 +207,7 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (file, "&File"),
         (edit, "&Edit"),
         (format, "F&ormat"),
+        (language_menu(), "&Language"),
         (view, "&View"),
         (help, "&Help"),
     ] {
@@ -253,6 +271,20 @@ unsafe fn theme_menu() -> HMENU {
     menu
 }
 
+unsafe fn language_menu() -> HMENU {
+    let menu = CreatePopupMenu();
+    append(menu, language_id(None), "&Plain Text");
+    AppendMenuW(menu, MF_SEPARATOR, 0, null());
+    for (i, language) in languages::LANGUAGES.iter().enumerate() {
+        append(
+            menu,
+            language_id(Some(i)),
+            &language.name.replace('&', "&&"),
+        );
+    }
+    menu
+}
+
 unsafe fn heading(menu: HMENU, label: &str, extra_flags: MENU_ITEM_FLAGS) {
     let label = wide(label);
     AppendMenuW(menu, MF_STRING | MF_GRAYED | extra_flags, 0, label.as_ptr());
@@ -310,6 +342,13 @@ pub unsafe fn update_checks(bar: HMENU, c: &Checks) {
         IDM_ENC_UTF8 as u32,
         IDM_ENC_ANSI as u32,
         encoding as u32,
+        MF_BYCOMMAND,
+    );
+    CheckMenuRadioItem(
+        bar,
+        IDM_LANGUAGE_BASE as u32,
+        language_id(Some(languages::LANGUAGES.len() - 1)) as u32,
+        language_id(c.language) as u32,
         MF_BYCOMMAND,
     );
     let eol = if c.format.is_lf_only {

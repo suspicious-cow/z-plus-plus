@@ -24,7 +24,7 @@ use crate::docs::{self, Doc};
 use crate::editor::Span;
 use crate::menu::*;
 use crate::sci::{self, SCNotification};
-use crate::themes::{self, Colors};
+use crate::themes::{self, Colors, Syntax};
 use crate::{dialog, editor, find, fonts, menu, prefs, statusbar, tabs, theme, toolbar, wide};
 
 const APP_NAME: &str = "z++";
@@ -118,10 +118,13 @@ fn colors() -> Colors {
     })
 }
 
-/// Colors, font face and size (tenths of a point) for styling an editor.
-pub fn look_parts() -> (Colors, String, u32) {
+/// Colors, code colors, font face and size (tenths of a point) for styling an editor.
+pub fn look_parts() -> (Colors, Syntax, String, u32) {
+    let colors = colors();
+    let theme = app(|a| a.preview.get().unwrap_or(a.theme.get()));
     (
-        colors(),
+        colors,
+        themes::syntax_of(theme, colors),
         app(|a| a.face.borrow().clone()),
         app(|a| a.size.get()),
     )
@@ -592,6 +595,8 @@ unsafe fn on_list_command(id: u16) -> bool {
         docs::open_recent(index);
     } else if let Some(encoding) = menu::encoding_for(id) {
         docs::set_encoding(encoding);
+    } else if let Some(language) = menu::language_for(id) {
+        docs::set_language(docs::active_index(), language);
     } else {
         let count = app(|a| a.font_list.borrow().len());
         let Some(index) = menu::font_index(id, count) else {
@@ -708,7 +713,8 @@ unsafe fn apply_look() {
 /// touching the menus or dropdown contents, so it is safe while a menu or dropdown is open.
 /// Other tabs are restyled when they are next shown (docs::activate).
 unsafe fn paint_look() {
-    let (colors, face, size) = look_parts();
+    let (colors, syntax, face, size) = look_parts();
+    let language = docs::language_of(docs::active_index());
     let (main, edit, gen) = app(|a| {
         let gen = a.look_gen.get() + 1;
         a.look_gen.set(gen);
@@ -721,9 +727,11 @@ unsafe fn paint_look() {
         edit,
         &theme::Look {
             colors,
+            syntax,
             face: &face,
             size_tenths: size,
         },
+        language,
     );
     app(|a| {
         if let Some(doc) = a.docs.borrow_mut().get_mut(a.active.get()) {
@@ -765,6 +773,7 @@ unsafe fn end_preview() {
 
 pub unsafe fn sync_menu_checks() {
     let format = docs::active_format();
+    let language = app(|a| a.docs.borrow().get(a.active.get()).and_then(|d| d.language));
     app(|a| {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();
@@ -779,6 +788,7 @@ pub unsafe fn sync_menu_checks() {
                 is_status_bar: a.is_status_bar.get(),
                 is_line_numbers: a.is_line_numbers.get(),
                 format,
+                language,
             },
         );
     });

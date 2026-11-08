@@ -77,6 +77,162 @@ pub fn first_dark() -> usize {
         .unwrap_or(PRESETS.len())
 }
 
+/// How one kind of token is drawn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Tok {
+    pub fg: u32,
+    pub is_bold: bool,
+    pub is_italic: bool,
+}
+
+/// A web-style 0xRRGGBB color plus Notepad++ font-style bits (1 bold, 2 italic).
+pub const fn tok(web_color: u32, font_style: u8) -> Tok {
+    Tok {
+        fg: hex(web_color),
+        is_bold: font_style & 1 != 0,
+        is_italic: font_style & 2 != 0,
+    }
+}
+
+/// Colors for code, by kind of token. Each language maps its lexer's styles onto these.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Syntax {
+    pub comment: Tok,
+    pub keyword: Tok,
+    /// Type names and other second-list keywords.
+    pub kind: Tok,
+    pub string: Tok,
+    pub number: Tok,
+    pub operator: Tok,
+    pub preprocessor: Tok,
+}
+
+/// Themes with one text color by design: code gets bold and italic, not new colors.
+const MONOCHROME: &[&str] = &["Green Screen", "High Contrast"];
+
+/// Hue, in degrees, for each token kind in themes that have no code colors of their own.
+const KEYWORD_HUE: f32 = 215.0;
+const KIND_HUE: f32 = 175.0;
+const STRING_HUE: f32 = 25.0;
+const NUMBER_HUE: f32 = 95.0;
+const PREPROCESSOR_HUE: f32 = 300.0;
+const DERIVED_SATURATION: f32 = 0.6;
+/// WCAG AA contrast for normal text.
+const MIN_CONTRAST: f32 = 4.5;
+const COMMENT_MIX_PERCENT: u32 = 55;
+
+/// Code colors for theme `index`: the theme's own (from Notepad++), or ones made to fit its
+/// text and background colors.
+pub fn syntax_of(index: usize, colors: Colors) -> Syntax {
+    let name = name_of(index);
+    if let Some((_, syntax)) = crate::syntax_colors::NPP_SYNTAX
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+    {
+        return *syntax;
+    }
+    if MONOCHROME.contains(&name) {
+        return monochrome(colors);
+    }
+    derived(colors)
+}
+
+fn plain(fg: u32) -> Tok {
+    Tok {
+        fg,
+        is_bold: false,
+        is_italic: false,
+    }
+}
+
+fn comment_tok(colors: Colors) -> Tok {
+    Tok {
+        is_italic: true,
+        ..plain(mix(colors.bg, colors.fg, COMMENT_MIX_PERCENT))
+    }
+}
+
+fn monochrome(colors: Colors) -> Syntax {
+    let bold = Tok {
+        is_bold: true,
+        ..plain(colors.fg)
+    };
+    Syntax {
+        comment: comment_tok(colors),
+        keyword: bold,
+        kind: bold,
+        string: plain(colors.fg),
+        number: plain(colors.fg),
+        operator: plain(colors.fg),
+        preprocessor: bold,
+    }
+}
+
+fn derived(colors: Colors) -> Syntax {
+    let hue = |h: f32| plain(readable(h, colors.bg));
+    Syntax {
+        comment: comment_tok(colors),
+        keyword: Tok {
+            is_bold: true,
+            ..hue(KEYWORD_HUE)
+        },
+        kind: hue(KIND_HUE),
+        string: hue(STRING_HUE),
+        number: hue(NUMBER_HUE),
+        operator: plain(colors.fg),
+        preprocessor: hue(PREPROCESSOR_HUE),
+    }
+}
+
+/// The color of hue `h` closest to mid-lightness that still reads well on `bg`.
+fn readable(h: f32, bg: u32) -> u32 {
+    let is_dark_bg = is_dark(bg);
+    let mut lightness: f32 = 0.5;
+    loop {
+        let color = hsl(h, DERIVED_SATURATION, lightness);
+        if contrast(color, bg) >= MIN_CONTRAST || !(0.0..=1.0).contains(&lightness) {
+            return color;
+        }
+        lightness += if is_dark_bg { 0.02 } else { -0.02 };
+    }
+}
+
+fn hsl(h: f32, s: f32, l: f32) -> u32 {
+    let l = l.clamp(0.0, 1.0);
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let (r, g, b) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    let byte = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    rgb(byte(r), byte(g), byte(b))
+}
+
+/// WCAG contrast ratio between two colors, 1 to 21.
+fn contrast(a: u32, b: u32) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+fn luminance(c: u32) -> f32 {
+    let (r, g, b) = channels(c);
+    let linear = |v: u32| {
+        let v = v as f32 / 255.0;
+        if v <= 0.040_45 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
+}
+
 /// Index into PRESETS, or PRESETS.len() for the custom colors.
 pub fn index_of(name: &str) -> Option<usize> {
     if name.eq_ignore_ascii_case(CUSTOM) {
@@ -152,6 +308,29 @@ mod tests {
             sorted.sort();
             sorted.dedup();
             assert_eq!(names, sorted);
+        }
+    }
+
+    #[test]
+    fn every_imported_syntax_names_a_theme() {
+        for (name, _) in crate::syntax_colors::NPP_SYNTAX {
+            assert!(index_of(name).is_some(), "{name} is not a theme");
+        }
+    }
+
+    #[test]
+    fn derived_code_colors_are_readable() {
+        for (i, p) in PRESETS.iter().enumerate() {
+            let s = syntax_of(i, p.colors);
+            for t in [s.keyword, s.kind, s.string, s.number, s.preprocessor] {
+                if t.fg != p.colors.fg
+                    && !crate::syntax_colors::NPP_SYNTAX
+                        .iter()
+                        .any(|(n, _)| n.eq_ignore_ascii_case(p.name))
+                {
+                    assert!(contrast(t.fg, p.colors.bg) >= MIN_CONTRAST, "{}", p.name);
+                }
+            }
         }
     }
 

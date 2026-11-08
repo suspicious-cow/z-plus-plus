@@ -1,8 +1,8 @@
 """Reads the default text and background color from each theme that ships with Notepad++.
 
-z++ edits plain text, so a theme is one text color and one background color. This script takes
-those two values from each theme's "Default Style" (in Global Styles) and prints them as Rust
-preset lines for src/themes.rs. Only the two color values are used; no theme file is copied.
+This script takes each theme's text and background color from its "Default Style" (in Global
+Styles) and prints them as Rust preset lines for src/themes.rs. Code colors come from
+scripts/import_npp_syntax.py. Only the two color values are used; no theme file is copied.
 
 Run: uv run --with defusedxml python scripts/import_npp_themes.py
 """

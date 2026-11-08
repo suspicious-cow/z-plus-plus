@@ -375,7 +375,8 @@ unsafe fn replace_all(edit: HWND) {
     }
     let flags = flags();
     let caret = editor::selection(edit).start;
-    let Some(count) = docs::batch_edit(edit, || replace_each(edit, &needle, &with, is_regex, flags))
+    let Some(count) =
+        docs::batch_edit(edit, || replace_each(edit, &needle, &with, is_regex, flags))
     else {
         bad_pattern();
         return;

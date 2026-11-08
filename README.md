@@ -6,7 +6,7 @@ A small, fast plain text editor for Windows, written in Rust. It runs natively o
 
 z++ is one exe. There is no installer and no runtime to install. It talks to the Win32 API directly and edits text with [Scintilla](https://www.scintilla.org), the editing component Notepad++ uses, compiled into the exe. It opens fast and stays small.
 
-The project is early. Syntax highlighting is next. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
+The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 
 ## Features
 
@@ -15,6 +15,7 @@ The project is early. Syntax highlighting is next. See [CHANGELOG.md](CHANGELOG.
 - z++ reopens last time's files and window size on start, and keeps the last 10 files under File > Recent Files.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
 - If another program changes an open file, z++ reloads it when you come back. If you have unsaved edits in that tab, it asks first.
+- Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
 - Line numbers (View > Line Numbers).
 - Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line. Find and Replace can match case, whole words, or a regular expression (ECMAScript syntax), and a replacement can use the groups the expression captured as `\1` to `\9`.
 - A status bar with line and column, the selection size, zoom, line endings and encoding. Click the encoding or line endings to change them; Format > Encoding and Format > Line Endings do the same.
@@ -93,6 +94,8 @@ Run the tests with `cargo test`.
 | [src/menu.rs](src/menu.rs) | Menu bar, command IDs, keyboard shortcuts |
 | [src/editor.rs](src/editor.rs) | The Scintilla edit control: text, selection, search |
 | [src/sci.rs](src/sci.rs) | Scintilla message numbers and the notification struct |
+| [src/languages.rs](src/languages.rs) | Highlighted languages: lexer, file names, keywords, token kinds |
+| [src/syntax_colors.rs](src/syntax_colors.rs) | Code colors from the Notepad++ themes (generated) |
 | [build.rs](build.rs) | Compiles Scintilla and Lexilla from [vendor](vendor) into the exe |
 | [src/file.rs](src/file.rs) | Reading and writing encodings and line endings, safe save |
 | [src/themes.rs](src/themes.rs) | Theme presets and color math |
@@ -104,7 +107,9 @@ Dark menus rely on two undocumented uxtheme.dll functions, the same approach Not
 
 ## Theme colors
 
-z++ edits plain text, so each theme is one text color and one background color. For the 22 themes that ship with [Notepad++](https://github.com/notepad-plus-plus/notepad-plus-plus/tree/master/PowerEditor/installer/themes), those two colors come from each theme file's Default Style. [scripts/import_npp_themes.py](scripts/import_npp_themes.py) reads them. No theme file is copied into z++.
+Each theme has a text color, a background color and seven code colors (comments, keywords, types, strings, numbers, operators and preprocessor lines). For the 22 themes that ship with [Notepad++](https://github.com/notepad-plus-plus/notepad-plus-plus/tree/master/PowerEditor/installer/themes), the text and background come from each theme file's Default Style, and the code colors come from its C++ styles. The Light theme's code colors come from Notepad++'s default styles ([stylers.model.xml](https://github.com/notepad-plus-plus/notepad-plus-plus/blob/master/PowerEditor/src/stylers.model.xml)). [scripts/import_npp_themes.py](scripts/import_npp_themes.py) and [scripts/import_npp_syntax.py](scripts/import_npp_syntax.py) read them. No theme file is copied into z++.
+
+The other themes and Custom get code colors computed from their text and background: a fixed hue for each kind of token, made light or dark enough to keep a 4.5:1 contrast with the background. Green Screen and High Contrast keep their one text color and use bold and italic instead.
 
 ## Bundled fonts
 

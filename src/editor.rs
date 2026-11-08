@@ -5,7 +5,8 @@ use windows_sys::w;
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use crate::sci::*;
+use crate::languages::Language;
+use crate::sci::{self, *};
 
 const EDIT_ID: usize = 1;
 const TAB_WIDTH: usize = 4;
@@ -259,6 +260,34 @@ fn nul_terminated(s: &str) -> Vec<u8> {
 /// The position one character after `pos` (a character can be several bytes).
 pub unsafe fn position_after(edit: HWND, pos: isize) -> isize {
     send(edit, SCI_POSITIONAFTER, pos as usize, 0)
+}
+
+/// Highlights the text as `language`, or shows it plain with None. Colors come from
+/// theme::style_editor, which has to run afterward.
+pub unsafe fn set_lexer(edit: HWND, language: Option<&Language>) {
+    let Some(language) = language else {
+        send(edit, SCI_SETILEXER, 0, 0);
+        // Without a lexer nothing restyles, so the old colors would stay.
+        send(edit, SCI_CLEARDOCUMENTSTYLE, 0, 0);
+        return;
+    };
+    let name = nul_terminated(language.lexer);
+    let lexer = sci::CreateLexer(name.as_ptr());
+    send(edit, SCI_SETILEXER, 0, lexer as isize);
+    for (key, value) in language.properties {
+        let (key, value) = (nul_terminated(key), nul_terminated(value));
+        send(
+            edit,
+            SCI_SETPROPERTY,
+            key.as_ptr() as usize,
+            value.as_ptr() as isize,
+        );
+    }
+    for (i, words) in language.keywords.iter().enumerate() {
+        let words = nul_terminated(words);
+        send(edit, SCI_SETKEYWORDS, i, words.as_ptr() as isize);
+    }
+    send(edit, SCI_COLOURISE, 0, -1);
 }
 
 /// The position one character before `pos`.
