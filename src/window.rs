@@ -13,7 +13,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     MONITOR_DEFAULTTONULL,
 };
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
-use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryW};
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::Controls::NMHDR;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -21,8 +21,9 @@ use windows_sys::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW,
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::docs::{self, Doc};
+use crate::editor::Span;
 use crate::menu::*;
-use crate::richedit::{CHARRANGE, EM_REDO, ENDROPFILES, EN_DROPFILES, EN_SELCHANGE};
+use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors};
 use crate::{dialog, editor, find, fonts, menu, prefs, statusbar, tabs, theme, toolbar, wide};
 
@@ -60,10 +61,12 @@ pub struct App {
     last_light: Cell<usize>,
     last_dark: Cell<usize>,
     face: RefCell<String>,
-    size: Cell<u32>,
+    /// Font size in tenths of a point.
+    pub size: Cell<u32>,
     pub is_wrap: Cell<bool>,
     is_toolbar: Cell<bool>,
     is_status_bar: Cell<bool>,
+    pub is_line_numbers: Cell<bool>,
     font_list: RefCell<Vec<String>>,
     custom_colors: RefCell<[u32; 16]>,
     paint: RefCell<Option<theme::Paint>>,
@@ -95,6 +98,7 @@ thread_local! {
         is_wrap: Cell::new(false),
         is_toolbar: Cell::new(true),
         is_status_bar: Cell::new(true),
+        is_line_numbers: Cell::new(true),
         font_list: RefCell::new(Vec::new()),
         custom_colors: RefCell::new([0x00FF_FFFF; 16]),
         paint: RefCell::new(None),
@@ -134,9 +138,9 @@ pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool) -> i32 {
     if !is_new_window && hand_off(&paths) {
         return 0;
     }
-    LoadLibraryW(w!("Msftedit.dll"));
-    fonts::register_bundled();
     let hinst = GetModuleHandleW(null());
+    editor::register(hinst);
+    fonts::register_bundled();
     let windows_fonts = fonts::windows_fonts();
     load_prefs(&windows_fonts);
     theme::set_app_mode(themes::is_dark(colors().bg));
@@ -269,6 +273,7 @@ unsafe fn load_prefs(windows_fonts: &[&str]) {
         a.is_wrap.set(p.is_wrap);
         a.is_toolbar.set(p.is_toolbar);
         a.is_status_bar.set(p.is_status_bar);
+        a.is_line_numbers.set(p.is_line_numbers);
         *a.font_list.borrow_mut() = font_list;
     });
 }
@@ -284,6 +289,7 @@ unsafe fn save_prefs() {
         is_wrap: a.is_wrap.get(),
         is_toolbar: a.is_toolbar.get(),
         is_status_bar: a.is_status_bar.get(),
+        is_line_numbers: a.is_line_numbers.get(),
     });
     prefs::save(&p);
 }
@@ -317,18 +323,11 @@ unsafe fn message_loop(hwnd: HWND) -> i32 {
         }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-        if msg.message == WM_MOUSEWHEEL {
-            docs::update_status(); // Ctrl+wheel zoom has no notification of its own
-        }
     }
     msg.wParam as i32
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if msg == find::message_id() {
-        find::on_message(app(|a| a.edit.get()), lparam);
-        return 0;
-    }
     match msg {
         WM_CREATE => on_create(hwnd),
         WM_SIZE => {
@@ -345,19 +344,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_COMMAND => on_command(hwnd, wparam, lparam),
         WM_NOTIFY => {
-            let hdr = &*(lparam as *const NMHDR);
-            if hdr.code == EN_SELCHANGE && hdr.hwndFrom == app(|a| a.edit.get()) {
-                docs::update_status();
-            } else if hdr.code == EN_DROPFILES {
-                // The editor owns this drop handle and frees it; 0 keeps it from pasting paths.
-                let drop = &*(lparam as *const ENDROPFILES);
-                open_dropped(drop.hDrop as HDROP);
-            }
+            on_notify(lparam);
             0
         }
         WM_DROPFILES => {
             open_dropped(wparam as HDROP);
             DragFinish(wparam as HDROP);
+            0
+        }
+        sci::ZPP_WM_FILES_DROPPED => {
+            open_dropped(wparam as HDROP); // the editor frees this handle
             0
         }
         WM_COPYDATA => on_copy_data(hwnd, lparam),
@@ -434,6 +430,28 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             result
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// Notifications from the editors.
+unsafe fn on_notify(lparam: LPARAM) {
+    let hdr = &*(lparam as *const NMHDR);
+    let is_active = hdr.hwndFrom == app(|a| a.edit.get());
+    match hdr.code {
+        sci::SCN_UPDATEUI if is_active => {
+            let n = &*(lparam as *const SCNotification);
+            if n.updated & (sci::SC_UPDATE_SELECTION | sci::SC_UPDATE_CONTENT) != 0 {
+                docs::update_status();
+            }
+        }
+        sci::SCN_ZOOM => {
+            docs::fit_margin(hdr.hwndFrom);
+            if is_active {
+                docs::update_status();
+            }
+        }
+        sci::SCN_SAVEPOINTREACHED | sci::SCN_SAVEPOINTLEFT => docs::on_edit_change(hdr.hwndFrom),
+        _ => {}
     }
 }
 
@@ -528,11 +546,11 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             SendMessageW(hwnd, WM_CLOSE, 0, 0);
             return 0;
         }
-        IDM_UNDO => editor::send(edit, WM_UNDO),
-        IDM_REDO => editor::send(edit, EM_REDO),
-        IDM_CUT => editor::send(edit, WM_CUT),
-        IDM_COPY => editor::send(edit, WM_COPY),
-        IDM_PASTE => editor::send(edit, WM_PASTE),
+        IDM_UNDO => editor::undo(edit),
+        IDM_REDO => editor::redo(edit),
+        IDM_CUT => editor::cut(edit),
+        IDM_COPY => editor::copy(edit),
+        IDM_PASTE => editor::paste(edit),
         IDM_SELECT_ALL => editor::select_all(edit),
         IDM_FIND | IDM_REPLACE => {
             find::open(hwnd, edit, id == IDM_REPLACE);
@@ -549,6 +567,7 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_BACK_COLOR => pick_color(false),
         IDM_TOOLBAR => toggle_bar(true),
         IDM_STATUS_BAR => toggle_bar(false),
+        IDM_LINE_NUMBERS => toggle_line_numbers(),
         IDM_FONT_DIALOG => font_dialog(),
         IDM_FONT_BIGGER => set_size(app(|a| a.size.get()) + fonts::SIZE_STEP_TENTHS),
         IDM_FONT_SMALLER => set_size(app(|a| a.size.get()).saturating_sub(fonts::SIZE_STEP_TENTHS)),
@@ -619,34 +638,32 @@ unsafe fn show_status_menu(hwnd: HWND, part: usize) {
 }
 
 unsafe fn go_to_line(hwnd: HWND, edit: HWND) {
-    let is_wrap = app(|a| a.is_wrap.get());
-    let lines = editor::line_count(edit, is_wrap);
-    let (current, _) = editor::caret_line_col(edit, is_wrap);
+    let lines = editor::line_count(edit);
+    let (current, _) = editor::caret_line_col(edit);
     let label = format!("Line number (1 to {lines}):");
     if let Some(line) = dialog::ask_number(hwnd, "Go to Line", &label, current, lines) {
-        let at = editor::line_start(edit, line - 1, is_wrap);
-        editor::select(
-            edit,
-            CHARRANGE {
-                cpMin: at,
-                cpMax: at,
-            },
-        );
+        editor::select(edit, Span::at(editor::line_start(edit, line - 1)));
     }
 }
 
-/// Opens the files in a drop; the caller frees the handle (or the editor does).
+/// Queues the files in a drop and opens them from a posted message, so Explorer's drag is not
+/// held up by any dialog z++ might show. The caller frees the handle (or the editor does).
 unsafe fn open_dropped(drop: HDROP) {
     let count = DragQueryFileW(drop, u32::MAX, null_mut(), 0);
     let mut paths = Vec::new();
     for i in 0..count {
         let mut buf = vec![0u16; MAX_PATH_UNITS];
         let len = DragQueryFileW(drop, i, buf.as_mut_ptr(), buf.len() as u32) as usize;
-        paths.push(PathBuf::from(String::from_utf16_lossy(&buf[..len])));
+        let path = PathBuf::from(String::from_utf16_lossy(&buf[..len]));
+        if path.is_file() {
+            paths.push(path);
+        }
     }
-    for path in paths.iter().filter(|p| p.is_file()) {
-        docs::open_path(path);
-    }
+    let main = app(|a| {
+        a.pending_open.borrow_mut().extend(paths);
+        a.main.get()
+    });
+    PostMessageW(main, WM_APP_OPEN_PENDING, 0, 0);
 }
 
 /// Files sent by a second z++ (for example from Explorer's Open with). Queued and opened from
@@ -713,6 +730,9 @@ unsafe fn paint_look() {
             doc.look_gen = gen;
         }
     });
+    if !edit.is_null() {
+        docs::fit_margin(edit);
+    }
     toolbar::set_colors(colors);
     tabs::set_colors(colors);
     statusbar::set_colors(colors);
@@ -757,6 +777,7 @@ pub unsafe fn sync_menu_checks() {
                 is_wrap: a.is_wrap.get(),
                 is_toolbar: a.is_toolbar.get(),
                 is_status_bar: a.is_status_bar.get(),
+                is_line_numbers: a.is_line_numbers.get(),
                 format,
             },
         );
@@ -907,6 +928,17 @@ unsafe fn toggle_wrap() {
         editor::set_wrap(edit, is_wrap);
     }
     sync_controls();
+}
+
+unsafe fn toggle_line_numbers() {
+    let edits: Vec<HWND> = app(|a| {
+        a.is_line_numbers.set(!a.is_line_numbers.get());
+        a.docs.borrow().iter().map(|d| d.edit).collect()
+    });
+    for edit in edits {
+        docs::fit_margin(edit);
+    }
+    sync_menu_checks();
 }
 
 /// Shows or hides the toolbar (`is_toolbar`) or the status bar.

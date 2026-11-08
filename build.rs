@@ -31,10 +31,65 @@ BEGIN
 END
 "#;
 
+const SCINTILLA_WIN32: [&str; 6] = [
+    "HanjaDic.cxx",
+    "ListBox.cxx",
+    "PlatWin.cxx",
+    "ScintillaWin.cxx",
+    "SurfaceD2D.cxx",
+    "SurfaceGDI.cxx",
+];
+const SYSTEM_LIBS: [&str; 7] = [
+    "user32", "gdi32", "imm32", "ole32", "oleaut32", "advapi32", "msimg32",
+];
+
 fn main() {
     let dir = PathBuf::from(env("CARGO_MANIFEST_DIR"));
     embed_manifest(&dir);
     embed_resources(&dir);
+    compile_scintilla(&dir.join("vendor"));
+}
+
+/// Scintilla (the editing control) and Lexilla (syntax highlighting), linked into zpp.exe.
+fn compile_scintilla(vendor: &Path) {
+    println!("cargo:rerun-if-changed=vendor");
+    let sci = vendor.join("scintilla");
+    let lex = vendor.join("lexilla");
+    let mut files = cxx_files(&sci.join("src"));
+    files.extend(SCINTILLA_WIN32.iter().map(|f| sci.join("win32").join(f)));
+    files.extend(cxx_files(&lex.join("lexlib")));
+    files.extend(cxx_files(&lex.join("lexers")));
+    files.push(lex.join("src").join("Lexilla.cxx"));
+    cc::Build::new()
+        .cpp(true)
+        .std("c++17")
+        .files(files)
+        .include(sci.join("include"))
+        .include(sci.join("src"))
+        .include(lex.join("include"))
+        .include(lex.join("lexlib"))
+        .define("UNICODE", None)
+        .define("_UNICODE", None)
+        .define("NDEBUG", None)
+        // Lexilla is linked in, not a DLL: keep zpp.exe from exporting its functions.
+        .define("LEXILLA_NO_EXPORT", None)
+        .flag("/EHsc")
+        .flag("/utf-8")
+        .warnings(false)
+        .compile("scintilla");
+    for lib in SYSTEM_LIBS {
+        println!("cargo:rustc-link-lib={lib}");
+    }
+}
+
+fn cxx_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "cxx"))
+        .collect();
+    files.sort();
+    files
 }
 
 /// The manifest goes in through the linker, so the .rc file must not add another one.

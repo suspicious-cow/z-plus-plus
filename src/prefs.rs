@@ -41,6 +41,7 @@ pub struct Prefs {
     pub is_wrap: bool,
     pub is_toolbar: bool,
     pub is_status_bar: bool,
+    pub is_line_numbers: bool,
 }
 
 pub fn load() -> Prefs {
@@ -60,6 +61,8 @@ pub fn load() -> Prefs {
         is_wrap: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("WordWrap")).is_some_and(|v| v != 0),
         is_toolbar: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("Toolbar")).is_none_or(|v| v != 0),
         is_status_bar: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("StatusBar"))
+            .is_none_or(|v| v != 0),
+        is_line_numbers: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("LineNumbers"))
             .is_none_or(|v| v != 0),
     }
 }
@@ -164,6 +167,7 @@ pub fn save(prefs: &Prefs) {
     write_dword(w!("WordWrap"), prefs.is_wrap as u32);
     write_dword(w!("Toolbar"), prefs.is_toolbar as u32);
     write_dword(w!("StatusBar"), prefs.is_status_bar as u32);
+    write_dword(w!("LineNumbers"), prefs.is_line_numbers as u32);
 }
 
 /// v0.1 stored only DarkMode. Without either, follow the Windows app theme.

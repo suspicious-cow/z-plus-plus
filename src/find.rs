@@ -1,53 +1,54 @@
-//! Find and Replace through the standard Windows find dialog, plus F3 / Shift+F3.
-//! The dialog is modeless: it reports button presses with the registered FINDMSGSTRING
-//! message, which the main window passes to `on_message`.
+//! Find and Replace: a modeless dialog (Ctrl+F, Ctrl+H) plus F3 / Shift+F3. Searches can match
+//! case, whole words, or a regular expression (ECMAScript syntax; \1 to \9 in the replacement).
 
-use std::cell::Cell;
-use std::mem::{size_of, zeroed};
+use std::cell::{Cell, RefCell};
 use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::{HWND, LPARAM};
-use windows_sys::Win32::UI::Controls::Dialogs::{
-    FindTextW, ReplaceTextW, FINDMSGSTRINGW, FINDREPLACEW, FR_DIALOGTERM, FR_FINDNEXT, FR_REPLACE,
-    FR_REPLACEALL,
+use windows_sys::Win32::Foundation::*;
+use windows_sys::Win32::UI::Controls::{
+    CheckDlgButton, IsDlgButtonChecked, BST_CHECKED, BST_UNCHECKED,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, SetFocus};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use crate::editor;
-use crate::richedit::{CHARRANGE, FR_DOWN, FR_MATCHCASE, FR_WHOLEWORD};
-use crate::{statusbar, wide};
+use crate::dialog::{self, Template, CLASS_BUTTON, CLASS_EDIT, CLASS_STATIC};
+use crate::editor::{self, BadPattern, Span};
+use crate::sci::{SCFIND_CXX11REGEX, SCFIND_MATCHCASE, SCFIND_REGEXP, SCFIND_WHOLEWORD};
+use crate::window::app;
+use crate::{docs, statusbar, wide};
 
-const BUF_LEN: usize = 512;
-/// The "Find what" box in the standard find dialog (edt1 in dlgs.h).
-const ID_FIND_WHAT: i32 = 0x480;
-const NUL: u16 = 0;
-const CR: u16 = b'\r' as u16;
-const LF: u16 = b'\n' as u16;
+// The find and replace boxes keep the IDs of the standard Windows find dialog (dlgs.h).
+const ID_FIND_WHAT: u16 = 0x480;
+const ID_REPLACE_WITH: u16 = 0x481;
+const ID_REPLACE_LABEL: u16 = 0x482;
+const ID_FIND_LABEL: u16 = 0x483;
+const ID_WHOLE_WORD: u16 = 0x410;
+const ID_MATCH_CASE: u16 = 0x411;
+const ID_REGEX: u16 = 0x4A0;
+const ID_FIND_PREV: u16 = 0x4A1;
+const ID_REPLACE: u16 = 0x400;
+const ID_REPLACE_ALL: u16 = 0x401;
+const ID_FIND_NEXT: u16 = IDOK as u16;
+const ID_CLOSE: u16 = IDCANCEL as u16;
+const DIALOG_SIZE: [i16; 2] = [262, 96];
+const REPLACE_ONLY: [u16; 4] = [
+    ID_REPLACE_LABEL,
+    ID_REPLACE_WITH,
+    ID_REPLACE,
+    ID_REPLACE_ALL,
+];
 
-struct FindState {
-    fr: FINDREPLACEW,
-    find: [u16; BUF_LEN],
-    replace: [u16; BUF_LEN],
+#[derive(Default, Clone)]
+struct Options {
+    needle: String,
+    replacement: String,
+    is_match_case: bool,
+    is_whole_word: bool,
+    is_regex: bool,
 }
 
 thread_local! {
-    /// Leaked once: the dialog keeps pointers into it for as long as it is open.
-    static STATE: Cell<*mut FindState> = const { Cell::new(null_mut()) };
+    static OPTIONS: RefCell<Options> = RefCell::new(Options::default());
     static DIALOG: Cell<HWND> = const { Cell::new(null_mut()) };
-    static IS_REPLACE: Cell<bool> = const { Cell::new(false) };
-    static MESSAGE_ID: Cell<u32> = const { Cell::new(0) };
-}
-
-unsafe fn state() -> &'static mut FindState {
-    STATE.with(|s| {
-        if s.get().is_null() {
-            let mut fs: Box<FindState> = Box::new(zeroed());
-            fs.fr.lStructSize = size_of::<FINDREPLACEW>() as u32;
-            fs.fr.Flags = FR_DOWN;
-            s.set(Box::into_raw(fs));
-        }
-        &mut *s.get()
-    })
 }
 
 /// The open find dialog, for IsDialogMessageW in the message loop.
@@ -55,93 +56,200 @@ pub fn dialog() -> HWND {
     DIALOG.with(|d| d.get())
 }
 
-/// The registered message the find dialog sends to its owner.
-pub fn message_id() -> u32 {
-    MESSAGE_ID.with(|m| {
-        if m.get() == 0 {
-            m.set(unsafe { RegisterWindowMessageW(FINDMSGSTRINGW) });
-        }
-        m.get()
-    })
-}
-
 /// Opens Find (Ctrl+F) or Replace (Ctrl+H), starting with a one-line selection as the search text.
 pub unsafe fn open(owner: HWND, edit: HWND, is_replace: bool) {
-    let st = state();
     let selected = editor::selected_text(edit);
-    if !selected.is_empty()
-        && selected.len() < BUF_LEN
-        && !selected.iter().any(|&c| c == CR || c == LF)
-    {
-        st.find = [0; BUF_LEN];
-        st.find[..selected.len()].copy_from_slice(&selected);
+    if !selected.is_empty() && !selected.contains(['\r', '\n']) {
+        OPTIONS.with(|o| o.borrow_mut().needle = selected);
     }
-    let open = dialog();
-    if !open.is_null() {
-        if IS_REPLACE.with(|r| r.get()) == is_replace {
-            // Keep the open dialog's box in step with the search text taken from the selection.
-            SetDlgItemTextW(open, ID_FIND_WHAT, st.find.as_ptr());
-            SetFocus(open);
-            return;
-        }
-        DestroyWindow(open);
+    let mut hwnd = dialog();
+    if hwnd.is_null() {
+        hwnd = create(owner);
+        DIALOG.with(|d| d.set(hwnd));
     }
-    st.fr.hwndOwner = owner;
-    st.fr.lpstrFindWhat = st.find.as_mut_ptr();
-    st.fr.wFindWhatLen = BUF_LEN as u16;
-    st.fr.lpstrReplaceWith = st.replace.as_mut_ptr();
-    st.fr.wReplaceWithLen = BUF_LEN as u16;
-    st.fr.Flags &= FR_DOWN | FR_MATCHCASE | FR_WHOLEWORD;
-    let hwnd = if is_replace {
-        ReplaceTextW(&mut st.fr)
-    } else {
-        FindTextW(&mut st.fr)
-    };
-    DIALOG.with(|d| d.set(hwnd));
-    IS_REPLACE.with(|r| r.set(is_replace));
+    show_mode(hwnd, is_replace);
+    load_options(hwnd);
+    ShowWindow(hwnd, SW_SHOW);
+    dialog::focus_all(hwnd, ID_FIND_WHAT);
 }
 
-/// Handles a button press in the find dialog.
-pub unsafe fn on_message(edit: HWND, lparam: LPARAM) {
-    let fr = &*(lparam as *const FINDREPLACEW);
-    if fr.Flags & FR_DIALOGTERM != 0 {
-        DIALOG.with(|d| d.set(null_mut()));
-        return;
+unsafe fn create(owner: HWND) -> HWND {
+    let style = DS_MODALFRAME as u32 | DS_CENTER as u32 | WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    let mut t = Template::new("Find", style, DIALOG_SIZE);
+    let input = WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL as u32;
+    let check = WS_TABSTOP | BS_AUTOCHECKBOX as u32;
+    let button = WS_TABSTOP | BS_PUSHBUTTON as u32;
+    t.add(CLASS_STATIC, ID_FIND_LABEL, 0, [7, 9, 52, 8], "Fi&nd what:");
+    t.add(CLASS_EDIT, ID_FIND_WHAT, input, [60, 7, 130, 13], "");
+    t.add(
+        CLASS_STATIC,
+        ID_REPLACE_LABEL,
+        0,
+        [7, 26, 52, 8],
+        "Re&place with:",
+    );
+    t.add(CLASS_EDIT, ID_REPLACE_WITH, input, [60, 24, 130, 13], "");
+    t.add(
+        CLASS_BUTTON,
+        ID_MATCH_CASE,
+        check,
+        [7, 46, 120, 10],
+        "Match &case",
+    );
+    t.add(
+        CLASS_BUTTON,
+        ID_WHOLE_WORD,
+        check,
+        [7, 59, 120, 10],
+        "Match &whole word only",
+    );
+    t.add(
+        CLASS_BUTTON,
+        ID_REGEX,
+        check,
+        [7, 72, 120, 10],
+        "Regular e&xpression",
+    );
+    let default = WS_TABSTOP | BS_DEFPUSHBUTTON as u32;
+    t.add(
+        CLASS_BUTTON,
+        ID_FIND_NEXT,
+        default,
+        [198, 6, 57, 14],
+        "&Find Next",
+    );
+    t.add(
+        CLASS_BUTTON,
+        ID_FIND_PREV,
+        button,
+        [198, 23, 57, 14],
+        "Find Pre&vious",
+    );
+    t.add(
+        CLASS_BUTTON,
+        ID_REPLACE,
+        button,
+        [198, 40, 57, 14],
+        "&Replace",
+    );
+    t.add(
+        CLASS_BUTTON,
+        ID_REPLACE_ALL,
+        button,
+        [198, 57, 57, 14],
+        "Replace &All",
+    );
+    t.add(CLASS_BUTTON, ID_CLOSE, button, [198, 74, 57, 14], "Close");
+    let template = t.finish();
+    CreateDialogIndirectParamW(
+        null_mut(),
+        template.as_ptr() as *const DLGTEMPLATE,
+        owner,
+        Some(dialog_proc),
+        0,
+    )
+}
+
+unsafe fn show_mode(hwnd: HWND, is_replace: bool) {
+    let show = if is_replace { SW_SHOW } else { SW_HIDE };
+    for id in REPLACE_ONLY {
+        ShowWindow(GetDlgItem(hwnd, id as i32), show);
     }
-    let is_down = fr.Flags & FR_DOWN != 0;
-    if fr.Flags & FR_REPLACEALL != 0 {
-        replace_all(edit);
-    } else if fr.Flags & FR_REPLACE != 0 {
-        replace_one(edit);
-    } else if fr.Flags & FR_FINDNEXT != 0 {
-        search(edit, is_down);
+    let title = wide(if is_replace { "Replace" } else { "Find" });
+    SetWindowTextW(hwnd, title.as_ptr());
+}
+
+/// Copied out first: setting the boxes' text sends the dialog notifications right away.
+unsafe fn load_options(hwnd: HWND) {
+    let o = OPTIONS.with(|o| o.borrow().clone());
+    dialog::set_item_text(hwnd, ID_FIND_WHAT, &o.needle);
+    dialog::set_item_text(hwnd, ID_REPLACE_WITH, &o.replacement);
+    set_check(hwnd, ID_MATCH_CASE, o.is_match_case);
+    set_check(hwnd, ID_WHOLE_WORD, o.is_whole_word);
+    set_check(hwnd, ID_REGEX, o.is_regex);
+}
+
+unsafe fn save_options(hwnd: HWND) {
+    let options = Options {
+        needle: dialog::item_text(hwnd, ID_FIND_WHAT),
+        replacement: dialog::item_text(hwnd, ID_REPLACE_WITH),
+        is_match_case: is_checked(hwnd, ID_MATCH_CASE),
+        is_whole_word: is_checked(hwnd, ID_WHOLE_WORD),
+        is_regex: is_checked(hwnd, ID_REGEX),
+    };
+    OPTIONS.with(|o| *o.borrow_mut() = options);
+}
+
+unsafe fn set_check(hwnd: HWND, id: u16, is_on: bool) {
+    let state = if is_on { BST_CHECKED } else { BST_UNCHECKED };
+    CheckDlgButton(hwnd, id as i32, state);
+}
+
+unsafe fn is_checked(hwnd: HWND, id: u16) -> bool {
+    IsDlgButtonChecked(hwnd, id as i32) == BST_CHECKED
+}
+
+unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wparam: WPARAM, _: LPARAM) -> isize {
+    match msg {
+        WM_INITDIALOG => 1,
+        WM_COMMAND => {
+            let id = (wparam & 0xFFFF) as u16;
+            if ((wparam >> 16) & 0xFFFF) as u32 != BN_CLICKED {
+                return 0; // typing in the boxes
+            }
+            if id == ID_CLOSE {
+                save_options(hwnd);
+                ShowWindow(hwnd, SW_HIDE);
+                SetFocus(app(|a| a.edit.get()));
+                return 1;
+            }
+            let edit = app(|a| a.edit.get());
+            save_options(hwnd);
+            match id {
+                ID_FIND_NEXT => {
+                    search(edit, true);
+                }
+                ID_FIND_PREV => {
+                    search(edit, false);
+                }
+                ID_REPLACE => replace_one(edit),
+                ID_REPLACE_ALL => replace_all(edit),
+                _ => return 0,
+            }
+            1
+        }
+        _ => 0,
     }
 }
 
 /// F3 and Shift+F3: repeat the last search, or open Find if there is none.
 pub unsafe fn find_again(owner: HWND, edit: HWND, is_forward: bool) {
-    if needle().is_empty() {
+    if OPTIONS.with(|o| o.borrow().needle.is_empty()) {
         open(owner, edit, false);
         return;
     }
     search(edit, is_forward);
 }
 
-fn needle() -> Vec<u16> {
-    let st = unsafe { state() };
-    let len = st.find.iter().position(|&c| c == NUL).unwrap_or(BUF_LEN);
-    st.find[..len].to_vec()
+fn flags() -> usize {
+    OPTIONS.with(|o| {
+        let o = o.borrow();
+        let mut flags = 0;
+        if o.is_match_case {
+            flags |= SCFIND_MATCHCASE;
+        }
+        if o.is_whole_word {
+            flags |= SCFIND_WHOLEWORD;
+        }
+        if o.is_regex {
+            flags |= SCFIND_REGEXP | SCFIND_CXX11REGEX;
+        }
+        flags
+    })
 }
 
-fn replacement() -> Vec<u16> {
-    let st = unsafe { state() };
-    let len = st.replace.iter().position(|&c| c == NUL).unwrap_or(BUF_LEN);
-    st.replace[..len].to_vec()
-}
-
-/// FR_MATCHCASE and FR_WHOLEWORD as chosen in the dialog.
-fn match_flags() -> u32 {
-    unsafe { state() }.fr.Flags & (FR_MATCHCASE | FR_WHOLEWORD)
+fn needle() -> String {
+    OPTIONS.with(|o| o.borrow().needle.clone())
 }
 
 /// Selects the next match after the selection (or before it), wrapping around the file once.
@@ -152,54 +260,76 @@ unsafe fn search(edit: HWND, is_forward: bool) -> bool {
     }
     let sel = editor::selection(edit);
     let end = editor::text_len(edit);
-    let flags = match_flags() | if is_forward { FR_DOWN } else { 0 };
     let (first, wrapped) = if is_forward {
-        (
-            CHARRANGE {
-                cpMin: sel.cpMax,
-                cpMax: -1,
-            },
-            CHARRANGE {
-                cpMin: 0,
-                cpMax: -1,
-            },
-        )
+        ((sel.end, end), (0, end))
     } else {
-        (
-            CHARRANGE {
-                cpMin: sel.cpMin,
-                cpMax: 0,
-            },
-            CHARRANGE {
-                cpMin: end,
-                cpMax: 0,
-            },
-        )
+        ((sel.start, 0), (end, 0))
     };
-    if let Some(found) = editor::find(edit, first, &needle, flags) {
-        editor::select(edit, found);
-        statusbar::set_message("");
-        return true;
+    let flags = flags();
+    let found = match find_moving(edit, first, sel, &needle, flags) {
+        Err(BadPattern) => return bad_pattern(),
+        Ok(Some(span)) => Some((span, false)),
+        Ok(None) => match find_moving(edit, wrapped, sel, &needle, flags) {
+            Err(BadPattern) => return bad_pattern(),
+            Ok(found) => found.map(|span| (span, true)),
+        },
+    };
+    let Some((span, is_wrapped)) = found else {
+        not_found(&needle);
+        return false;
+    };
+    editor::select(edit, span);
+    let side = if is_forward { "top" } else { "bottom" };
+    let message = if is_wrapped {
+        format!("Search continued from the {side}")
+    } else {
+        String::new()
+    };
+    statusbar::set_message(&message);
+    true
+}
+
+/// Like `editor::find`, but an empty match (a regex like ^ or $) equal to the current empty
+/// selection is skipped, so Find Next always moves.
+unsafe fn find_moving(
+    edit: HWND,
+    (from, to): (isize, isize),
+    sel: Span,
+    needle: &str,
+    flags: usize,
+) -> Result<Option<Span>, BadPattern> {
+    let found = editor::find(edit, from, to, needle, flags)?;
+    if found != Some(sel) || sel.start != sel.end {
+        return Ok(found);
     }
-    if let Some(found) = editor::find(edit, wrapped, &needle, flags) {
-        editor::select(edit, found);
-        let side = if is_forward { "top" } else { "bottom" };
-        statusbar::set_message(&format!("Search continued from the {side}"));
-        return true;
+    let next = if from <= to {
+        editor::position_after(edit, from)
+    } else {
+        editor::position_before(edit, from)
+    };
+    if next == from {
+        return Ok(None);
     }
-    not_found(&needle);
+    editor::find(edit, next, to, needle, flags)
+}
+
+unsafe fn bad_pattern() -> bool {
+    message("That is not a valid regular expression.");
     false
 }
 
-unsafe fn not_found(needle: &[u16]) {
-    let text = format!("Cannot find \"{}\".", String::from_utf16_lossy(needle));
-    statusbar::set_message(&text);
-    let owner = if dialog().is_null() {
-        GetActiveWindow()
-    } else {
+unsafe fn not_found(needle: &str) {
+    message(&format!("Cannot find \"{needle}\"."));
+}
+
+unsafe fn message(text: &str) {
+    statusbar::set_message(text);
+    let owner = if IsWindowVisible(dialog()) != 0 {
         dialog()
+    } else {
+        GetActiveWindow()
     };
-    let text = wide(&text);
+    let text = wide(text);
     let caption = wide("z++");
     MessageBoxW(
         owner,
@@ -211,109 +341,86 @@ unsafe fn not_found(needle: &[u16]) {
 
 /// Replace: if the selection is a match, replace it, then select the next match.
 unsafe fn replace_one(edit: HWND) {
-    let needle = needle();
+    let (needle, with, is_regex) = OPTIONS.with(|o| {
+        let o = o.borrow();
+        (o.needle.clone(), o.replacement.clone(), o.is_regex)
+    });
+    if needle.is_empty() {
+        return;
+    }
+    // An empty selection can be an empty regex match too (from ^ or $).
     let sel = editor::selection(edit);
-    let is_match = sel.cpMax > sel.cpMin
-        && editor::find(edit, sel, &needle, match_flags() | FR_DOWN) == Some(sel);
-    if is_match {
-        editor::replace_selection(edit, &replacement());
+    match editor::find(edit, sel.start, sel.end, &needle, flags()) {
+        Ok(Some(span)) if span == sel => {
+            let end = editor::replace_found(edit, &with, is_regex);
+            editor::select(edit, Span::at(end));
+        }
+        Err(BadPattern) => {
+            bad_pattern();
+            return;
+        }
+        _ => {}
     }
     search(edit, true);
 }
 
 /// Replace All, as a single undo step.
 unsafe fn replace_all(edit: HWND) {
-    let needle = needle();
+    let (needle, with, is_regex) = OPTIONS.with(|o| {
+        let o = o.borrow();
+        (o.needle.clone(), o.replacement.clone(), o.is_regex)
+    });
     if needle.is_empty() {
         return;
     }
-    let flags = match_flags() | FR_DOWN;
-    let mut ranges = Vec::new();
-    let mut from = 0;
-    while let Some(found) = editor::find(
-        edit,
-        CHARRANGE {
-            cpMin: from,
-            cpMax: -1,
-        },
-        &needle,
-        flags,
-    ) {
-        ranges.push(found);
-        from = found.cpMax.max(found.cpMin + 1);
-    }
-    if ranges.is_empty() {
+    let flags = flags();
+    let caret = editor::selection(edit).start;
+    let Some(count) = docs::batch_edit(edit, || replace_each(edit, &needle, &with, is_regex, flags))
+    else {
+        bad_pattern();
+        return;
+    };
+    if count == 0 {
         not_found(&needle);
         return;
     }
-    let caret = editor::selection(edit).cpMin;
-    let text = splice(&editor::raw_text(edit), &ranges, &replacement());
-    editor::replace_all_text(edit, &text);
-    crate::docs::refresh(); // EM_SETTEXTEX sends no EN_CHANGE, so update the tab and title here
-    let caret = caret.min(text.len() as i32);
-    editor::select(
-        edit,
-        CHARRANGE {
-            cpMin: caret,
-            cpMax: caret,
-        },
-    );
-    let count = ranges.len();
+    editor::select(edit, Span::at(editor::snap(edit, caret)));
     let noun = if count == 1 { "match" } else { "matches" };
     statusbar::set_message(&format!("Replaced {count} {noun}"));
 }
 
-/// `text` with each range (sorted, not overlapping) replaced by `with`.
-fn splice(text: &[u16], ranges: &[CHARRANGE], with: &[u16]) -> Vec<u16> {
-    let mut out = Vec::with_capacity(text.len());
-    let mut at = 0usize;
-    for r in ranges {
-        let (start, end) = (r.cpMin.max(0) as usize, r.cpMax.max(0) as usize);
-        if start < at || end > text.len() {
-            continue;
+/// Replaces every match as one undo step. None if the pattern is not a valid regex.
+unsafe fn replace_each(
+    edit: HWND,
+    needle: &str,
+    with: &str,
+    is_regex: bool,
+    flags: usize,
+) -> Option<usize> {
+    let mut count = 0usize;
+    let mut from = 0;
+    editor::begin_undo(edit);
+    loop {
+        let span = match editor::find(edit, from, editor::text_len(edit), needle, flags) {
+            Ok(Some(span)) => span,
+            Ok(None) => break,
+            Err(BadPattern) => {
+                editor::end_undo(edit);
+                return None;
+            }
+        };
+        let end = editor::replace_found(edit, with, is_regex);
+        count += 1;
+        // An empty match (a regex like ^) would match the same spot forever: step past it.
+        from = if span.start == span.end {
+            editor::position_after(edit, end)
+        } else {
+            end
+        };
+        if from >= editor::text_len(edit) && span.start == span.end {
+            break;
         }
-        out.extend_from_slice(&text[at..start]);
-        out.extend_from_slice(with);
-        at = end;
     }
-    out.extend_from_slice(&text[at..]);
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn w(s: &str) -> Vec<u16> {
-        s.encode_utf16().collect()
-    }
-
-    fn r(a: i32, b: i32) -> CHARRANGE {
-        CHARRANGE { cpMin: a, cpMax: b }
-    }
-
-    #[test]
-    fn splice_replaces_each_range() {
-        let text = w("cat hat cat");
-        assert_eq!(
-            splice(&text, &[r(0, 3), r(8, 11)], &w("dog")),
-            w("dog hat dog")
-        );
-    }
-
-    #[test]
-    fn splice_handles_empty_replacement_and_no_ranges() {
-        let text = w("a-b-c");
-        assert_eq!(splice(&text, &[r(1, 2), r(3, 4)], &[]), w("abc"));
-        assert_eq!(splice(&text, &[], &w("x")), text);
-    }
-
-    #[test]
-    fn splice_skips_bad_ranges() {
-        let text = w("abc");
-        assert_eq!(
-            splice(&text, &[r(1, 2), r(0, 1), r(2, 9)], &w("X")),
-            w("aXc")
-        );
-    }
+    editor::end_undo(edit);
+    Some(count)
 }

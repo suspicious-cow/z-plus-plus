@@ -1,4 +1,4 @@
-//! Decoding and encoding file bytes. Text is kept as UTF-16 for the edit control.
+//! Decoding and encoding file bytes. Decoded text is UTF-16; the editor converts it to UTF-8 for Scintilla.
 
 use std::io::{self, Write};
 use std::os::windows::ffi::OsStrExt;
@@ -61,6 +61,9 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<u16>, Format), &'static str> {
     };
     if text.contains(&0) {
         return Err("it contains NUL characters (a binary file, or UTF-16 without a BOM)");
+    }
+    if char::decode_utf16(text.iter().copied()).any(|c| c.is_err()) {
+        return Err("it contains broken UTF-16 (an unpaired surrogate)");
     }
     let (crlf, lf, cr) = count_line_breaks(&text);
     let kinds = [crlf, lf, cr].iter().filter(|&&n| n > 0).count();
@@ -206,6 +209,28 @@ pub fn encoding_label(encoding: Encoding) -> &'static str {
         Encoding::Utf16Le => "UTF-16 LE",
         Encoding::Ansi => "ANSI",
     }
+}
+
+/// Every line break (CRLF, LF or CR) as LF, or as CRLF.
+pub fn normalize_line_breaks(text: &[u16], is_lf_only: bool) -> Vec<u16> {
+    let mut out = Vec::with_capacity(text.len() + text.len() / 32);
+    let mut i = 0;
+    while i < text.len() {
+        let u = text[i];
+        if u == CR || u == LF {
+            if u == CR && text.get(i + 1) == Some(&LF) {
+                i += 1;
+            }
+            if !is_lf_only {
+                out.push(CR);
+            }
+            out.push(LF);
+        } else {
+            out.push(u);
+        }
+        i += 1;
+    }
+    out
 }
 
 fn crlf_to_lf(text: &[u16]) -> Vec<u16> {
@@ -357,6 +382,19 @@ mod tests {
         let (text, fmt) = decode(&input).unwrap();
         assert_eq!(text, w("hi"));
         assert_eq!(encode(&text, fmt).0, input);
+    }
+
+    #[test]
+    fn normalizes_every_kind_of_line_break() {
+        let mixed = w("a\r\nb\nc\rd");
+        assert_eq!(normalize_line_breaks(&mixed, true), w("a\nb\nc\nd"));
+        assert_eq!(normalize_line_breaks(&mixed, false), w("a\r\nb\r\nc\r\nd"));
+        assert_eq!(normalize_line_breaks(&w("\r\r\n"), true), w("\n\n"));
+    }
+
+    #[test]
+    fn refuses_unpaired_surrogates() {
+        assert!(decode(&[0xFF, 0xFE, 0x00, 0xD8, b'a', 0]).is_err());
     }
 
     #[test]

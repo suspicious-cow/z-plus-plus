@@ -4,9 +4,9 @@ A small, fast plain text editor for Windows, written in Rust. It runs natively o
 
 ![z++ with the Dark theme](docs/screenshots/dark.png)
 
-z++ is one exe. There is no installer and no runtime to install. It talks to the Win32 API directly and edits text with the Windows RichEdit control, so it opens fast and stays small.
+z++ is one exe. There is no installer and no runtime to install. It talks to the Win32 API directly and edits text with [Scintilla](https://www.scintilla.org), the editing component Notepad++ uses, compiled into the exe. It opens fast and stays small.
 
-The project is early. It edits plain text well, but it is not a code editor: there is no syntax highlighting. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
+The project is early. Syntax highlighting is next. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 
 ## Features
 
@@ -15,7 +15,8 @@ The project is early. It edits plain text well, but it is not a code editor: the
 - z++ reopens last time's files and window size on start, and keeps the last 10 files under File > Recent Files.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
 - If another program changes an open file, z++ reloads it when you come back. If you have unsaved edits in that tab, it asks first.
-- Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line.
+- Line numbers (View > Line Numbers).
+- Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line. Find and Replace can match case, whole words, or a regular expression (ECMAScript syntax), and a replacement can use the groups the expression captured as `\1` to `\9`.
 - A status bar with line and column, the selection size, zoom, line endings and encoding. Click the encoding or line endings to change them; Format > Encoding and Format > Line Endings do the same.
 - Files keep their encoding (UTF-8, UTF-8 with BOM, UTF-16 LE or ANSI) and their LF line endings unless you change them. z++ refuses to open a file it could not save back unchanged, such as a binary file, instead of damaging it.
 - 32 color themes, including all 22 that ship with Notepad++, plus your own text and background colors. Point at a theme in View > Theme or in the toolbar's theme list and the whole window shows it right away; move off it or press Escape to go back. Dark themes also darken the title bar, menus and scroll bars.
@@ -73,7 +74,7 @@ cargo build --release --target x86_64-pc-windows-msvc
 
 The exe lands in `target\<target>\release\zpp.exe`. The C runtime is linked statically, so the exe runs on a clean Windows 11 machine.
 
-To leave the bundled fonts out, build with `--no-default-features`. On the development machine (Windows 11 ARM64, measured 2026-11-03), the ARM64 release exe was 2.4 MB with the fonts and 361 KB without them.
+To leave the bundled fonts out, build with `--no-default-features`. On the development machine (Windows 11 ARM64, measured 2026-11-07), the ARM64 release exe was 3.2 MB with the fonts and 1.3 MB without them. Scintilla and Lexilla account for most of the second number.
 
 Run the tests with `cargo test`.
 
@@ -87,10 +88,12 @@ Run the tests with `cargo test`.
 | [src/tabs.rs](src/tabs.rs) | The tab strip |
 | [src/statusbar.rs](src/statusbar.rs) | The status bar |
 | [src/find.rs](src/find.rs) | Find and Replace |
-| [src/dialog.rs](src/dialog.rs) | The Go to Line dialog |
+| [src/dialog.rs](src/dialog.rs) | Dialog templates built in memory, and the Go to Line dialog |
 | [src/gdi.rs](src/gdi.rs) | Drawing helpers shared by the toolbar, tabs and status bar |
 | [src/menu.rs](src/menu.rs) | Menu bar, command IDs, keyboard shortcuts |
-| [src/editor.rs](src/editor.rs) | The RichEdit control in plain-text mode |
+| [src/editor.rs](src/editor.rs) | The Scintilla edit control: text, selection, search |
+| [src/sci.rs](src/sci.rs) | Scintilla message numbers and the notification struct |
+| [build.rs](build.rs) | Compiles Scintilla and Lexilla from [vendor](vendor) into the exe |
 | [src/file.rs](src/file.rs) | Reading and writing encodings and line endings, safe save |
 | [src/themes.rs](src/themes.rs) | Theme presets and color math |
 | [src/theme.rs](src/theme.rs) | Applying colors and fonts to the window, dark menu bar painting |
@@ -129,4 +132,4 @@ Bug reports and ideas are welcome in [Issues](https://github.com/suspicious-cow/
 
 ## License
 
-The z++ source code is licensed under the [Apache License 2.0](LICENSE). The bundled fonts keep their own licenses, listed above. See [NOTICE](NOTICE).
+The z++ source code is licensed under the [Apache License 2.0](LICENSE). Scintilla and Lexilla, in [vendor](vendor), keep their own license ([License.txt](vendor/scintilla/License.txt)); [vendor/PATCHES.md](vendor/PATCHES.md) lists the versions and the one change z++ makes to them. The bundled fonts keep their own licenses, listed above. See [NOTICE](NOTICE).

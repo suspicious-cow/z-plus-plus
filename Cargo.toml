@@ -39,4 +39,5 @@ panic = "abort"
 strip = true
 
 [build-dependencies]
+cc = { version = "1.11.1", features = ["parallel"] }
 embed-resource = "3.0.12"

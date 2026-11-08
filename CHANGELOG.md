@@ -6,6 +6,8 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Line numbers, on by default (View > Line Numbers).
+- Regular expressions in Find and Replace (ECMAScript syntax), with `\1` to `\9` in the replacement for captured groups. An invalid expression says so instead of finding nothing.
 - Tabs, one per open file, each with its own undo history. Ctrl+W closes a tab, Ctrl+Tab switches, a dot marks unsaved changes.
 - One z++ window: files opened from Explorer while z++ runs open as tabs there. `--new-window` opens a separate window.
 - Find, Find Next/Previous (F3, Shift+F3), Replace, Replace All as one undo step, and Go to Line (Ctrl+G).
@@ -18,6 +20,9 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Changed
 
+- The text is now edited with Scintilla 5.6.9 instead of the Windows RichEdit control. Scintilla and Lexilla are compiled into the exe, so it is still one file with nothing to install.
+- Find and Replace is one dialog with Find Next, Find Previous, Replace and Replace All buttons.
+- Format > Line Endings converts the text in place as one undo step.
 - Saving writes a temporary file and swaps it in, so an interrupted save cannot leave a half-written file.
 
 - 19 more themes, so z++ now has every theme that ships with Notepad++ (their default text and background colors), 32 in all.

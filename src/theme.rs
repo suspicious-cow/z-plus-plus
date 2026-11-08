@@ -1,6 +1,6 @@
 //! Applying a look (colors and font) to the window.
 //!
-//! Documented: the title bar (DWM), the editor colors (RichEdit), the scroll bars (SetWindowTheme).
+//! Documented: the title bar (DWM), the editor styles (Scintilla), the scroll bars (SetWindowTheme).
 //! Undocumented, same approach as Notepad++ and the win32-darkmode samples: popup menus follow
 //! uxtheme ordinal 135 (SetPreferredAppMode), and the menu bar is painted by handling the
 //! WM_UAHDRAWMENU / WM_UAHDRAWMENUITEM messages. If the ordinals ever disappear, menus stay light.
@@ -16,12 +16,12 @@ use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32,
 };
 use windows_sys::Win32::UI::Controls::{
-    SetWindowTheme, DRAWITEMSTRUCT, EM_GETMODIFY, EM_SETMODIFY, ODS_DISABLED, ODS_GRAYED,
-    ODS_HOTLIGHT, ODS_INACTIVE, ODS_NOACCEL, ODS_SELECTED,
+    SetWindowTheme, DRAWITEMSTRUCT, ODS_DISABLED, ODS_GRAYED, ODS_HOTLIGHT, ODS_INACTIVE,
+    ODS_NOACCEL, ODS_SELECTED,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use crate::richedit::*;
+use crate::sci::*;
 use crate::themes::{self, Colors};
 
 pub const WM_UAHDRAWMENU: u32 = 0x0091;
@@ -29,7 +29,11 @@ pub const WM_UAHDRAWMENUITEM: u32 = 0x0092;
 
 const HOT_MIX_PERCENT: u32 = 18;
 const INACTIVE_MIX_PERCENT: u32 = 50;
-const TWIPS_PER_TENTH_POINT: u32 = 2;
+const HUNDREDTHS_PER_TENTH: u32 = 10;
+const GUTTER_TEXT_MIX_PERCENT: u32 = 45;
+const GUTTER_BACK_MIX_PERCENT: u32 = 5;
+const SELECTION_MIX_PERCENT: u32 = 25;
+const INACTIVE_SELECTION_MIX_PERCENT: u32 = 15;
 
 const ORD_SET_PREFERRED_APP_MODE: usize = 135;
 const ORD_FLUSH_MENU_THEMES: usize = 136;
@@ -154,23 +158,31 @@ pub unsafe fn style_editor(edit: HWND, look: &Look) {
 }
 
 unsafe fn apply_editor(edit: HWND, look: &Look) {
-    let was_modified = SendMessageW(edit, EM_GETMODIFY, 0, 0);
-    SendMessageW(edit, EM_SETBKGNDCOLOR, 0, look.colors.bg as isize);
-    let mut cf: CHARFORMATW = zeroed();
-    cf.cbSize = size_of::<CHARFORMATW>() as u32;
-    cf.dwMask = CFM_COLOR | CFM_FACE | CFM_SIZE;
-    cf.crTextColor = look.colors.fg;
-    cf.yHeight = (look.size_tenths * TWIPS_PER_TENTH_POINT) as i32;
-    let face: Vec<u16> = look
-        .face
-        .encode_utf16()
-        .take(cf.szFaceName.len() - 1)
-        .collect();
-    cf.szFaceName[..face.len()].copy_from_slice(&face);
-    let cf_ptr = &cf as *const CHARFORMATW as isize;
-    SendMessageW(edit, EM_SETCHARFORMAT, SCF_DEFAULT as usize, cf_ptr);
-    SendMessageW(edit, EM_SETCHARFORMAT, SCF_ALL as usize, cf_ptr);
-    SendMessageW(edit, EM_SETMODIFY, was_modified as usize, 0);
+    let Colors { fg, bg } = look.colors;
+    let send = |msg: u32, wparam: usize, lparam: isize| SendMessageW(edit, msg, wparam, lparam);
+    let mut face = look.face.as_bytes().to_vec();
+    face.push(0);
+    send(SCI_STYLESETFORE, STYLE_DEFAULT, fg as isize);
+    send(SCI_STYLESETBACK, STYLE_DEFAULT, bg as isize);
+    send(SCI_STYLESETFONT, STYLE_DEFAULT, face.as_ptr() as isize);
+    let hundredths = (look.size_tenths * HUNDREDTHS_PER_TENTH) as isize;
+    send(SCI_STYLESETSIZEFRACTIONAL, STYLE_DEFAULT, hundredths);
+    send(SCI_STYLECLEARALL, 0, 0);
+    let gutter_fg = themes::mix(bg, fg, GUTTER_TEXT_MIX_PERCENT);
+    let gutter_bg = themes::mix(bg, fg, GUTTER_BACK_MIX_PERCENT);
+    send(SCI_STYLESETFORE, STYLE_LINENUMBER, gutter_fg as isize);
+    send(SCI_STYLESETBACK, STYLE_LINENUMBER, gutter_bg as isize);
+    let element =
+        |id: usize, color: u32| send(SCI_SETELEMENTCOLOUR, id, (color | ALPHA_OPAQUE) as isize);
+    element(SC_ELEMENT_CARET, fg);
+    element(
+        SC_ELEMENT_SELECTION_BACK,
+        themes::mix(bg, fg, SELECTION_MIX_PERCENT),
+    );
+    element(
+        SC_ELEMENT_SELECTION_INACTIVE_BACK,
+        themes::mix(bg, fg, INACTIVE_SELECTION_MIX_PERCENT),
+    );
 }
 
 /// Fills the whole menu bar. Only called for dark themes.

@@ -34,6 +34,7 @@ pub const IDM_BACK_COLOR: u16 = 123;
 pub const IDM_TOOLBAR: u16 = 124;
 pub const IDM_GOTO: u16 = 125;
 pub const IDM_STATUS_BAR: u16 = 126;
+pub const IDM_LINE_NUMBERS: u16 = 127;
 pub const IDM_FONT_DIALOG: u16 = 130;
 pub const IDM_FONT_BIGGER: u16 = 131;
 pub const IDM_FONT_SMALLER: u16 = 132;
@@ -90,6 +91,7 @@ pub struct Checks<'a> {
     pub is_wrap: bool,
     pub is_toolbar: bool,
     pub is_status_bar: bool,
+    pub is_line_numbers: bool,
     pub format: Format,
 }
 
@@ -177,6 +179,7 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         SEPARATOR,
         (IDM_TOOLBAR, "Tool&bar"),
         (IDM_STATUS_BAR, "&Status Bar"),
+        (IDM_LINE_NUMBERS, "Line &Numbers"),
         SEPARATOR,
         (IDM_NEXT_TAB, "&Next Tab\tCtrl+Tab"),
         (IDM_PREV_TAB, "&Previous Tab\tCtrl+Shift+Tab"),
@@ -279,6 +282,7 @@ unsafe fn font_menu(windows_fonts: &[&str]) -> HMENU {
 pub unsafe fn update_checks(bar: HMENU, c: &Checks) {
     check(bar, IDM_TOOLBAR, c.is_toolbar);
     check(bar, IDM_STATUS_BAR, c.is_status_bar);
+    check(bar, IDM_LINE_NUMBERS, c.is_line_numbers);
     check(bar, IDM_WRAP, c.is_wrap);
     let last_theme = theme_id(themes::PRESETS.len());
     CheckMenuRadioItem(

@@ -9,7 +9,7 @@ mod fonts;
 mod gdi;
 mod menu;
 mod prefs;
-mod richedit;
+mod sci;
 mod statusbar;
 mod tabs;
 mod theme;

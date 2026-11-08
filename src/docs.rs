@@ -12,8 +12,8 @@ use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+use crate::editor::Span;
 use crate::file::{self, Encoding, Format, Stamp};
-use crate::richedit::CHARRANGE;
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
 use crate::{editor, menu, prefs, statusbar, tabs, theme};
 
@@ -31,6 +31,28 @@ pub struct Doc {
     /// Which look (colors, font) the editor was last styled with; see window::paint_look.
     pub look_gen: u32,
     shown_modified: bool,
+    /// Unsaved even though the text matches the file: it was deleted on disk, or the encoding
+    /// changed. Scintilla's own modified state only follows edits to the text.
+    is_forced_modified: bool,
+}
+
+impl Doc {
+    pub unsafe fn is_modified(&self) -> bool {
+        self.is_forced_modified || editor::is_modified(self.edit)
+    }
+}
+
+unsafe fn is_modified(index: usize) -> bool {
+    app(|a| a.docs.borrow().get(index).is_some_and(|d| d.is_modified()))
+}
+
+unsafe fn force_modified(index: usize) {
+    app(|a| a.docs.borrow_mut()[index].is_forced_modified = true);
+}
+
+/// Line numbers on or off, with the margin sized for the document's last line number.
+pub unsafe fn fit_margin(edit: HWND) {
+    editor::show_line_numbers(edit, app(|a| a.is_line_numbers.get()));
 }
 
 pub fn active_index() -> usize {
@@ -83,6 +105,7 @@ pub unsafe fn new_tab() -> usize {
             stamp: None,
             look_gen: 0,
             shown_modified: false,
+            is_forced_modified: false,
         });
         docs.len() - 1
     });
@@ -119,14 +142,16 @@ unsafe fn style_if_stale(index: usize) {
         return;
     }
     let (colors, face, size) = window::look_parts();
+    let edit = edit_of(index);
     theme::style_editor(
-        edit_of(index),
+        edit,
         &theme::Look {
             colors,
             face: &face,
             size_tenths: size,
         },
     );
+    fit_margin(edit);
     app(|a| a.docs.borrow_mut()[index].look_gen = gen);
 }
 
@@ -144,7 +169,7 @@ pub unsafe fn refresh() {
         let list = docs
             .iter_mut()
             .map(|d| {
-                d.shown_modified = editor::is_modified(d.edit);
+                d.shown_modified = d.is_modified();
                 tabs::Tab {
                     label: label(d),
                     is_modified: d.shown_modified,
@@ -159,15 +184,32 @@ pub unsafe fn refresh() {
     window::sync_menu_checks();
 }
 
+thread_local! {
+    static IS_BATCH_EDIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `edits` without the per-change status and margin updates, then does them once.
+pub unsafe fn batch_edit<T>(edit: HWND, edits: impl FnOnce() -> T) -> T {
+    IS_BATCH_EDIT.with(|b| b.set(true));
+    let result = edits();
+    IS_BATCH_EDIT.with(|b| b.set(false));
+    on_edit_change(edit);
+    result
+}
+
 /// EN_CHANGE from one of the editors: repaint its tab only when its modified mark flips.
 pub unsafe fn on_edit_change(edit: HWND) {
+    if IS_BATCH_EDIT.with(|b| b.get()) {
+        return;
+    }
     let flipped = app(|a| {
         a.docs
             .borrow()
             .iter()
-            .any(|d| d.edit == edit && d.shown_modified != editor::is_modified(edit))
+            .any(|d| d.edit == edit && d.shown_modified != d.is_modified())
     });
     statusbar::set_message("");
+    fit_margin(edit);
     if flipped {
         refresh();
     } else if edit == app(|a| a.edit.get()) {
@@ -179,7 +221,7 @@ pub unsafe fn update_title() {
     let (main, title) = app(|a| {
         let docs = a.docs.borrow();
         let title = docs.get(a.active.get()).map(|d| {
-            let marker = if editor::is_modified(d.edit) { "*" } else { "" };
+            let marker = if d.is_modified() { "*" } else { "" };
             let name = d
                 .path
                 .as_ref()
@@ -199,9 +241,8 @@ pub unsafe fn update_status() {
     if edit.is_null() {
         return;
     }
-    let (line, col) = editor::caret_line_col(edit, app(|a| a.is_wrap.get()));
-    let sel = editor::selection(edit);
-    let selected = (sel.cpMax - sel.cpMin).max(0);
+    let (line, col) = editor::caret_line_col(edit);
+    let selected = editor::char_count(edit, editor::selection(edit));
     let mut position = format!("Ln {line}, Col {col}");
     if selected > 0 {
         position.push_str(&format!("    {selected} selected"));
@@ -210,10 +251,17 @@ pub unsafe fn update_status() {
     statusbar::set(statusbar::Info {
         position,
         message: statusbar::message(),
-        zoom: format!("{}%", editor::zoom_percent(edit)),
+        zoom: format!("{}%", zoom_percent(edit)),
         line_endings: file::line_ending_label(format).to_string(),
         encoding: file::encoding_label(format.encoding).to_string(),
     });
+}
+
+/// Ctrl+wheel zoom adds points to the font size; shown as a percentage of the chosen size.
+unsafe fn zoom_percent(edit: HWND) -> isize {
+    let tenths = app(|a| a.size.get()).max(1) as isize;
+    let zoomed = (tenths + editor::zoom_points(edit) * 10).max(0);
+    (zoomed * 100 + tenths / 2) / tenths
 }
 
 /// File > Open: one or more files, each in its own tab.
@@ -239,14 +287,16 @@ pub unsafe fn open_path(path: &Path) -> bool {
         new_tab()
     };
     let edit = edit_of(index);
-    editor::set_text(edit, &text);
+    editor::set_text(edit, &text, format.is_lf_only);
     app(|a| {
         let mut docs = a.docs.borrow_mut();
         let doc = &mut docs[index];
         doc.path = Some(path.clone());
         doc.format = format;
         doc.stamp = file::stamp(&path);
+        doc.is_forced_modified = false;
     });
+    fit_margin(edit);
     add_recent(&path);
     activate(index);
     if format.is_mixed_eol {
@@ -258,7 +308,8 @@ pub unsafe fn open_path(path: &Path) -> bool {
     true
 }
 
-/// The decoded file, or None after telling the user why it cannot be opened.
+/// The decoded file with one kind of line break, or None after telling the user why it cannot
+/// be opened.
 unsafe fn read(path: &Path) -> Option<(Vec<u16>, Format)> {
     if path.is_dir() {
         return None;
@@ -271,7 +322,10 @@ unsafe fn read(path: &Path) -> Option<(Vec<u16>, Format)> {
         }
     };
     match file::decode(&bytes) {
-        Ok(decoded) => Some(decoded),
+        Ok((text, format)) => Some((
+            file::normalize_line_breaks(&text, format.is_lf_only),
+            format,
+        )),
         Err(why) => {
             error_box(&format!(
                 "z++ will not open {} because {why}.",
@@ -300,7 +354,7 @@ unsafe fn is_pristine(index: usize) -> bool {
         docs.get(index)
             .map_or((false, null_mut()), |d| (d.path.is_none(), d.edit))
     });
-    path_none && !editor::is_modified(edit) && editor::text_len(edit) == 0
+    path_none && !is_modified(index) && editor::text_len(edit) == 0
 }
 
 pub unsafe fn save(index: usize) -> bool {
@@ -326,7 +380,7 @@ pub unsafe fn save_as(index: usize) -> bool {
 
 pub unsafe fn save_all() {
     for i in 0..count() {
-        if editor::is_modified(edit_of(i)) && !save(i) {
+        if is_modified(i) && !save(i) {
             return;
         }
     }
@@ -337,7 +391,9 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         let d = &a.docs.borrow()[index];
         (d.edit, d.format)
     });
-    let (bytes, used) = file::encode(&editor::text(edit), format);
+    // Undoing a line-ending change, a regex replace or a paste can mix line endings back in.
+    let text = file::normalize_line_breaks(&editor::text(edit), format.is_lf_only);
+    let (bytes, used) = file::encode(&text, format);
     if let Err(e) = file::write_safely(path, &bytes) {
         error_box(&format!("Could not save {}:\n{e}", path.display()));
         return false;
@@ -348,8 +404,9 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         doc.format = used;
         doc.path = Some(path.to_path_buf());
         doc.stamp = file::stamp(path);
+        doc.is_forced_modified = false;
     });
-    editor::set_modified(edit, false);
+    editor::set_saved(edit);
     refresh();
     if used.encoding != format.encoding {
         info_box(&format!(
@@ -363,7 +420,7 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
 
 /// Asks about unsaved changes in tab `index`. True when it is fine to let them go.
 unsafe fn confirm_discard(index: usize) -> bool {
-    if !editor::is_modified(edit_of(index)) {
+    if !is_modified(index) {
         return true;
     }
     activate(index);
@@ -415,10 +472,10 @@ pub unsafe fn check_disk(index: usize) {
 }
 
 unsafe fn check_disk_inner(index: usize) {
-    let Some((path, old, edit)) = app(|a| {
+    let Some((path, old)) = app(|a| {
         let docs = a.docs.borrow();
         let d = docs.get(index)?;
-        Some((d.path.clone()?, d.stamp, d.edit))
+        Some((d.path.clone()?, d.stamp))
     }) else {
         return;
     };
@@ -429,12 +486,12 @@ unsafe fn check_disk_inner(index: usize) {
     app(|a| a.docs.borrow_mut()[index].stamp = now);
     let name = path.display();
     if now.is_none() {
-        editor::set_modified(edit, true);
+        force_modified(index);
         refresh();
         info_box(&format!("{name} was deleted or moved by another program.\n\nIt is still open in z++. Save it to keep it."));
         return;
     }
-    if editor::is_modified(edit) {
+    if is_modified(index) {
         let question = format!(
             "{name} was changed by another program.\n\nReload it and lose your changes in z++?"
         );
@@ -453,18 +510,17 @@ unsafe fn reload(index: usize, path: &Path) -> bool {
         return false;
     };
     let edit = edit_of(index);
-    let sel = editor::selection(edit);
-    editor::set_text(edit, &text);
-    let end = editor::text_len(edit);
-    let caret = sel.cpMin.min(end);
-    editor::select(
-        edit,
-        CHARRANGE {
-            cpMin: caret,
-            cpMax: caret,
-        },
-    );
-    app(|a| a.docs.borrow_mut()[index].format = format);
+    let caret = editor::selection(edit).start;
+    let top = editor::first_visible_line(edit);
+    editor::set_text(edit, &text, format.is_lf_only);
+    editor::select(edit, Span::at(editor::snap(edit, caret)));
+    editor::set_first_visible_line(edit, top);
+    fit_margin(edit);
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        docs[index].format = format;
+        docs[index].is_forced_modified = false;
+    });
     statusbar::set_message("Reloaded: the file changed on disk");
     refresh();
     true
@@ -472,25 +528,28 @@ unsafe fn reload(index: usize, path: &Path) -> bool {
 
 /// Format > Encoding: the text stays the same; the next save writes the new encoding.
 pub unsafe fn set_encoding(encoding: Encoding) {
-    change_format(|f| f.encoding = encoding);
-}
-
-/// Format > Line Endings: the next save writes LF or CRLF line breaks.
-pub unsafe fn set_line_endings(is_lf_only: bool) {
-    change_format(|f| f.is_lf_only = is_lf_only);
-}
-
-unsafe fn change_format(change: impl FnOnce(&mut Format)) {
     let index = active_index();
-    let (before, after) = app(|a| {
-        let mut docs = a.docs.borrow_mut();
-        let doc = &mut docs[index];
-        let before = doc.format;
-        change(&mut doc.format);
-        (before, doc.format)
+    let before =
+        app(|a| std::mem::replace(&mut a.docs.borrow_mut()[index].format.encoding, encoding));
+    if before != encoding {
+        force_modified(index);
+        refresh();
+    }
+}
+
+/// Format > Line Endings: converts every line break now (one undo step).
+pub unsafe fn set_line_endings(is_lf_only: bool) {
+    let index = active_index();
+    let before = app(|a| {
+        std::mem::replace(
+            &mut a.docs.borrow_mut()[index].format.is_lf_only,
+            is_lf_only,
+        )
     });
-    if before.encoding != after.encoding || before.is_lf_only != after.is_lf_only {
-        editor::set_modified(edit_of(index), true);
+    if before != is_lf_only {
+        editor::convert_line_endings(edit_of(index), is_lf_only);
+        // Undo can bring the text back to its save point, but the format stays changed.
+        force_modified(index);
         refresh();
     }
 }
