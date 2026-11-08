@@ -5,13 +5,16 @@ use windows_sys::w;
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+use crate::diff;
 use crate::languages::Language;
 use crate::sci::{self, *};
 
 const EDIT_ID: usize = 1;
 const TAB_WIDTH: usize = 4;
 const MARGIN_NUMBERS: usize = 0;
+const MARGIN_CHANGES: usize = 1;
 const MARGIN_FOLD: usize = 2;
+const CHANGE_MARGIN_WIDTH: isize = 5;
 const MIN_NUMBER_DIGITS: usize = 3;
 const TEXT_PADDING: isize = 4;
 
@@ -61,7 +64,17 @@ pub unsafe fn create(parent: HWND, hinst: HINSTANCE) -> HWND {
     send(edit, SCI_SETSCROLLWIDTHTRACKING, 1, 0);
     send(edit, SCI_SETMARGINLEFT, 0, TEXT_PADDING);
     send(edit, SCI_SETMARGINTYPEN, MARGIN_NUMBERS, SC_MARGIN_NUMBER);
-    send(edit, SCI_SETMARGINWIDTHN, 1, 0);
+    // A thin margin for the change history markers (lines edited, or changed by a reload).
+    let history_mask = (SC_MARKNUM_HISTORY_REVERTED_TO_ORIGIN
+        ..=SC_MARKNUM_HISTORY_REVERTED_TO_MODIFIED)
+        .fold(0isize, |mask, n| mask | 1 << n);
+    send(edit, SCI_SETMARGINMASKN, MARGIN_CHANGES, history_mask);
+    send(
+        edit,
+        SCI_SETMARGINWIDTHN,
+        MARGIN_CHANGES,
+        CHANGE_MARGIN_WIDTH,
+    );
     send(edit, SCI_SETMARGINWIDTHN, MARGIN_FOLD, 0);
     // Insert and delete only: they drive EN_CHANGE, which updates the tab and title.
     send(
@@ -95,24 +108,100 @@ pub unsafe fn show_line_numbers(edit: HWND, is_shown: bool) {
     send(edit, SCI_SETMARGINWIDTHN, MARGIN_NUMBERS, width);
 }
 
-/// Replaces all text and clears the undo history and modified state.
+/// Replaces all text and clears the undo history, the change history and modified state.
 pub unsafe fn set_text(edit: HWND, text: &[u16], is_lf_only: bool) {
     let mut utf8 = String::from_utf16_lossy(text).into_bytes();
     utf8.push(0);
+    send(edit, SCI_SETCHANGEHISTORY, SC_CHANGE_HISTORY_DISABLED, 0);
     send(edit, SCI_SETTEXT, 0, utf8.as_ptr() as isize);
     send(edit, SCI_EMPTYUNDOBUFFER, 0, 0);
+    // Change history can only start with an empty undo history.
+    send(
+        edit,
+        SCI_SETCHANGEHISTORY,
+        SC_CHANGE_HISTORY_ENABLED | SC_CHANGE_HISTORY_MARKERS,
+        0,
+    );
     set_eol_mode(edit, is_lf_only);
     send(edit, SCI_GOTOPOS, 0, 0);
     set_saved(edit);
 }
 
+/// Makes the text equal to `text` by replacing only the lines that differ, as one undo step,
+/// then marks it saved. The caret and scroll position stay put, Undo brings the old text back,
+/// and the change history margin marks the lines that changed. Returns the hunks applied.
+pub unsafe fn replace_changed_lines(edit: HWND, text: &[u16], is_lf_only: bool) -> usize {
+    let new = String::from_utf16_lossy(text).into_bytes();
+    let old = utf8_text(edit);
+    let (old_lines, new_lines) = (diff::lines(&old), diff::lines(&new));
+    let hunks = diff::hunks(&old_lines, &new_lines);
+    set_eol_mode(edit, is_lf_only);
+    begin_undo(edit);
+    for h in hunks.iter().rev() {
+        let start = line_offset(&old_lines, h.old_start);
+        let end = line_offset(&old_lines, h.old_end);
+        let with = new_lines[h.new_start..h.new_end].concat();
+        // Replace only the bytes that differ, so a changed line is not also recorded as a
+        // deleted line end (which would mark the next line too).
+        let (head, tail) = shared_ends(&old[start..end], &with);
+        let with = &with[head..with.len() - tail];
+        send(
+            edit,
+            SCI_SETTARGETRANGE,
+            start + head,
+            (end - tail) as isize,
+        );
+        send(edit, SCI_REPLACETARGET, with.len(), with.as_ptr() as isize);
+    }
+    end_undo(edit);
+    set_saved(edit);
+    hunks.len()
+}
+
+/// Lengths of the bytes `a` and `b` share at their start and at their end, without splitting
+/// a UTF-8 character or a CRLF, and without overlapping.
+fn shared_ends(a: &[u8], b: &[u8]) -> (usize, usize) {
+    let is_cut = |s: &[u8], at: usize| {
+        at > 0 && at < s.len() && ((s[at] & 0xC0) == 0x80 || (s[at - 1] == b'\r' && s[at] == b'\n'))
+    };
+    let mut head = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    while is_cut(a, head) || is_cut(b, head) {
+        head -= 1;
+    }
+    let room = a.len().min(b.len()) - head;
+    let mut tail = a
+        .iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take(room)
+        .take_while(|(x, y)| x == y)
+        .count();
+    while is_cut(a, a.len() - tail) || is_cut(b, b.len() - tail) {
+        tail -= 1;
+    }
+    (head, tail)
+}
+
+/// Byte offset where line `n` starts (or the end, past the last line).
+fn line_offset(lines: &[&[u8]], n: usize) -> usize {
+    lines[..n].iter().map(|l| l.len()).sum()
+}
+
+fn utf8_text(edit: HWND) -> Vec<u8> {
+    unsafe {
+        let len = text_len(edit) as usize;
+        let mut buf = vec![0u8; len + 1];
+        send(edit, SCI_GETTEXT, len + 1, buf.as_mut_ptr() as isize);
+        buf.truncate(len);
+        buf
+    }
+}
+
 /// All text with the document's own line breaks.
 pub unsafe fn text(edit: HWND) -> Vec<u16> {
-    let len = text_len(edit) as usize;
-    let mut buf = vec![0u8; len + 1];
-    send(edit, SCI_GETTEXT, len + 1, buf.as_mut_ptr() as isize);
-    buf.truncate(len);
-    String::from_utf8_lossy(&buf).encode_utf16().collect()
+    String::from_utf8_lossy(&utf8_text(edit))
+        .encode_utf16()
+        .collect()
 }
 
 /// The length in bytes.
@@ -187,6 +276,19 @@ pub unsafe fn caret_line_col(edit: HWND) -> (usize, usize) {
     (line as usize + 1, col as usize + 1)
 }
 
+/// Puts the caret on 0-based `line` at character `col` (stopping at the line's end) and
+/// scrolls it to the middle of the view.
+pub unsafe fn go_to(edit: HWND, line: usize, col: usize) {
+    let line = line.min(line_count(edit) - 1);
+    let start = line_start(edit, line);
+    let end = send(edit, SCI_GETLINEENDPOSITION, line, 0);
+    let pos = send(edit, SCI_POSITIONRELATIVE, start as usize, col as isize);
+    // POSITIONRELATIVE gives 0 when it runs off the document.
+    let pos = if pos < start || pos > end { end } else { pos };
+    send(edit, SCI_SETSEL, pos as usize, pos);
+    send(edit, SCI_VERTICALCENTRECARET, 0, 0);
+}
+
 /// Characters (not bytes) in `span`.
 pub unsafe fn char_count(edit: HWND, span: Span) -> usize {
     send(edit, SCI_COUNTCHARACTERS, span.start as usize, span.end).max(0) as usize
@@ -199,15 +301,6 @@ pub unsafe fn line_count(edit: HWND) -> usize {
 /// Position where a 0-based line starts.
 pub unsafe fn line_start(edit: HWND, line: usize) -> isize {
     send(edit, SCI_POSITIONFROMLINE, line, 0).max(0)
-}
-
-pub unsafe fn first_visible_line(edit: HWND) -> usize {
-    send(edit, SCI_GETFIRSTVISIBLELINE, 0, 0).max(0) as usize
-}
-
-/// Scrolls so `line` (a display line) is at the top.
-pub unsafe fn set_first_visible_line(edit: HWND, line: usize) {
-    send(edit, SCI_SETFIRSTVISIBLELINE, line, 0);
 }
 
 /// Points added to every font size by Ctrl+wheel (negative when zoomed out).
@@ -426,6 +519,36 @@ mod tests {
             assert_eq!(snap(edit, 4), 3); // between CR and LF
             assert_eq!(snap(edit, 5), 5);
             assert_eq!(snap(edit, 99), text_len(edit));
+            DestroyWindow(edit);
+        }
+    }
+
+    #[test]
+    fn shared_ends_stop_at_character_boundaries() {
+        assert_eq!(shared_ends(b"let n = 42;\n", b"let n = 43;\n"), (9, 2));
+        assert_eq!(shared_ends("aé\n".as_bytes(), "aè\n".as_bytes()), (1, 1));
+        assert_eq!(shared_ends(b"x\r\n", b"x\n"), (1, 0)); // keeps the CRLF whole
+        assert_eq!(shared_ends(b"ab", b"ab"), (2, 0));
+        assert_eq!(shared_ends(b"", b"new\n"), (0, 0));
+    }
+
+    #[test]
+    fn reload_edits_only_what_changed() {
+        let _turn = SCINTILLA.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let edit = test_editor("one\ntwo\nthree\n");
+            let new: Vec<u16> = "one\n2\nthree\nfour\n".encode_utf16().collect();
+            assert_eq!(replace_changed_lines(edit, &new, true), 2);
+            assert_eq!(
+                String::from_utf16(&text(edit)).unwrap(),
+                "one\n2\nthree\nfour\n"
+            );
+            assert!(!is_modified(edit));
+            undo(edit);
+            assert_eq!(
+                String::from_utf16(&text(edit)).unwrap(),
+                "one\ntwo\nthree\n"
+            );
             DestroyWindow(edit);
         }
     }

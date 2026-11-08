@@ -25,7 +25,9 @@ use crate::editor::Span;
 use crate::menu::*;
 use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors, Syntax};
-use crate::{dialog, editor, find, fonts, menu, prefs, statusbar, tabs, theme, toolbar, wide};
+use crate::{
+    dialog, editor, find, fonts, menu, notice, prefs, statusbar, tabs, theme, toolbar, wait, wide,
+};
 
 const APP_NAME: &str = "z++";
 const CLASS_NAME: *const u16 = w!("ZppMainWindow");
@@ -38,6 +40,10 @@ const TENTHS_PER_INCH: u32 = 720;
 /// WM_COPYDATA tag for "open these files", sent by a second z++ to the first one.
 const COPYDATA_OPEN: usize = 0x5A50;
 const WM_APP_OPEN_PENDING: u32 = WM_APP + 5;
+/// Checks the active tab's file this often, so changes made by another program (an agent, a
+/// build) show up while z++ is in the background.
+const DISK_TIMER_ID: usize = 1;
+const DISK_POLL_MS: u32 = 1000;
 const MAX_PATH_UNITS: usize = 32 * 1024;
 
 pub struct App {
@@ -47,6 +53,7 @@ pub struct App {
     pub toolbar: Cell<HWND>,
     pub tab_strip: Cell<HWND>,
     pub status: Cell<HWND>,
+    pub notice: Cell<HWND>,
     pub menus: Cell<Menus>,
     pub docs: RefCell<Vec<Doc>>,
     pub active: Cell<usize>,
@@ -55,7 +62,8 @@ pub struct App {
     pub look_gen: Cell<u32>,
     pub is_checking_disk: Cell<bool>,
     pub recent: RefCell<Vec<PathBuf>>,
-    pending_open: RefCell<Vec<PathBuf>>,
+    /// Files to open, each with the --wait event to set when its tab closes.
+    pending_open: RefCell<Vec<(PathBuf, Option<String>)>>,
     theme: Cell<usize>,
     custom: Cell<Colors>,
     last_light: Cell<usize>,
@@ -81,6 +89,7 @@ thread_local! {
         toolbar: Cell::new(null_mut()),
         tab_strip: Cell::new(null_mut()),
         status: Cell::new(null_mut()),
+        notice: Cell::new(null_mut()),
         menus: Cell::new(Menus { bar: null_mut(), recent: null_mut(), encoding: null_mut(), line_endings: null_mut() }),
         docs: RefCell::new(Vec::new()),
         active: Cell::new(0),
@@ -137,7 +146,11 @@ fn theme_or(name: &str, fallback: &str) -> usize {
 }
 
 /// Starts z++, or hands `paths` to a z++ that is already running unless `is_new_window`.
-pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool) -> i32 {
+/// With `is_wait`, hands them over and returns once their tabs are closed.
+pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool, is_wait: bool) -> i32 {
+    if is_wait {
+        return wait::run(&paths, CLASS_NAME);
+    }
     if !is_new_window && hand_off(&paths) {
         return 0;
     }
@@ -159,8 +172,9 @@ pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool) -> i32 {
     menu::set_recent(menus.recent, &recent);
     docs::restore_session(&session.files, session.active);
     for path in &paths {
-        docs::open_path(path);
+        docs::open_location(path);
     }
+    SetTimer(hwnd, DISK_TIMER_ID, DISK_POLL_MS, None);
     message_loop(hwnd)
 }
 
@@ -368,6 +382,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             on_tab(wparam, lparam as usize);
             0
         }
+        notice::WM_APP_NOTICE => {
+            docs::on_notice_button(wparam);
+            0
+        }
         statusbar::WM_APP_STATUS_CLICK => {
             show_status_menu(hwnd, wparam);
             0
@@ -404,7 +422,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_QUERYENDSESSION => docs::confirm_exit() as LRESULT,
+        WM_TIMER if wparam == DISK_TIMER_ID => {
+            docs::check_disk(docs::active_index());
+            0
+        }
         WM_DESTROY => {
+            docs::release_all_waiters();
             save_prefs();
             PostQuitMessage(0);
             0
@@ -463,11 +486,13 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
     let bar = toolbar::create(hwnd, hinst);
     let strip = tabs::create(hwnd, hinst);
     let status = statusbar::create(hwnd, hinst);
+    let notice = notice::create(hwnd, hinst);
     let (is_toolbar, is_status_bar) = app(|a| {
         a.main.set(hwnd);
         a.toolbar.set(bar);
         a.tab_strip.set(strip);
         a.status.set(status);
+        a.notice.set(notice);
         (a.is_toolbar.get(), a.is_status_bar.get())
     });
     if !is_toolbar {
@@ -484,13 +509,14 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
 
 /// Toolbar, tabs, the active editor, then the status bar, top to bottom.
 pub unsafe fn layout() {
-    let (main, edit, bar, strip, status, is_toolbar, is_status_bar) = app(|a| {
+    let (main, edit, bar, strip, status, notice, is_toolbar, is_status_bar) = app(|a| {
         (
             a.main.get(),
             a.edit.get(),
             a.toolbar.get(),
             a.tab_strip.get(),
             a.status.get(),
+            a.notice.get(),
             a.is_toolbar.get(),
             a.is_status_bar.get(),
         )
@@ -509,7 +535,9 @@ pub unsafe fn layout() {
     };
     MoveWindow(bar, 0, 0, rc.right, bar_h, 1);
     MoveWindow(strip, 0, bar_h, rc.right, tabs_h, 1);
-    let top = bar_h + tabs_h;
+    let notice_h = notice::height();
+    MoveWindow(notice, 0, bar_h + tabs_h, rc.right, notice_h, 1);
+    let top = bar_h + tabs_h + notice_h;
     let edit_h = (rc.bottom - top - status_h).max(0);
     if !edit.is_null() {
         MoveWindow(edit, 0, top, rc.right, edit_h, 1);
@@ -665,7 +693,9 @@ unsafe fn open_dropped(drop: HDROP) {
         }
     }
     let main = app(|a| {
-        a.pending_open.borrow_mut().extend(paths);
+        a.pending_open
+            .borrow_mut()
+            .extend(paths.into_iter().map(|p| (p, None)));
         a.main.get()
     });
     PostMessageW(main, WM_APP_OPEN_PENDING, 0, 0);
@@ -675,14 +705,25 @@ unsafe fn open_dropped(drop: HDROP) {
 /// a posted message, so the sender is not kept waiting on any dialog z++ might show.
 unsafe fn on_copy_data(hwnd: HWND, lparam: LPARAM) -> LRESULT {
     let cds = &*(lparam as *const COPYDATASTRUCT);
-    if cds.dwData != COPYDATA_OPEN || cds.lpData.is_null() || cds.cbData < 2 {
+    let is_wait = cds.dwData == wait::COPYDATA_OPEN_WAIT;
+    if !(is_wait || cds.dwData == COPYDATA_OPEN) || cds.lpData.is_null() || cds.cbData < 2 {
         return 0;
     }
     let units = std::slice::from_raw_parts(cds.lpData as *const u16, cds.cbData as usize / 2);
-    let paths = units
+    let mut strings = units
         .split(|&c| c == 0)
         .filter(|s| !s.is_empty())
-        .map(|s| PathBuf::from(String::from_utf16_lossy(s)));
+        .map(String::from_utf16_lossy);
+    // A --wait sender puts its event name first; every file it sends carries it.
+    let waiter = if is_wait { strings.next() } else { None };
+    let paths: Vec<(PathBuf, Option<String>)> = strings
+        .map(|s| (PathBuf::from(s), waiter.clone()))
+        .collect();
+    if paths.is_empty() {
+        if let Some(w) = waiter {
+            wait::release(&w);
+        }
+    }
     app(|a| a.pending_open.borrow_mut().extend(paths));
     if IsIconic(hwnd) != 0 {
         ShowWindow(hwnd, SW_RESTORE);
@@ -694,9 +735,16 @@ unsafe fn on_copy_data(hwnd: HWND, lparam: LPARAM) -> LRESULT {
 
 /// Opens files handed over by another z++, then checks the active tab against the disk.
 unsafe fn open_pending(is_activation: bool) {
-    let pending: Vec<PathBuf> = app(|a| a.pending_open.borrow_mut().drain(..).collect());
-    for path in &pending {
-        docs::open_path(path);
+    let pending: Vec<(PathBuf, Option<String>)> =
+        app(|a| a.pending_open.borrow_mut().drain(..).collect());
+    for (path, waiter) in &pending {
+        let index = docs::open_location(path);
+        if let Some(waiter) = waiter {
+            match index {
+                Some(index) => docs::add_waiter(index, waiter),
+                None => wait::release(waiter),
+            }
+        }
     }
     if is_activation && pending.is_empty() {
         docs::check_disk(docs::active_index());
@@ -744,6 +792,7 @@ unsafe fn paint_look() {
     toolbar::set_colors(colors);
     tabs::set_colors(colors);
     statusbar::set_colors(colors);
+    notice::set_colors(colors);
 }
 
 /// Hovering a theme in View > Theme previews it; hovering anything else restores the theme.

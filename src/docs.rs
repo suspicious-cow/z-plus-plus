@@ -12,11 +12,10 @@ use windows_sys::Win32::UI::Controls::Dialogs::*;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use crate::editor::Span;
 use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
-use crate::{editor, menu, prefs, statusbar, tabs, theme};
+use crate::{editor, menu, notice, prefs, statusbar, tabs, theme, wait};
 
 const UNTITLED: &str = "Untitled";
 const PATH_BUF_LEN: usize = 64 * 1024;
@@ -33,6 +32,10 @@ pub struct Doc {
     pub look_gen: u32,
     /// Index into languages::LANGUAGES, or None for plain text.
     pub language: Option<usize>,
+    /// News about the file on disk, shown in the notice bar while this tab is active.
+    disk_notice: Option<DiskNotice>,
+    /// `zpp --wait` callers (event names) to release when this tab closes.
+    waiters: Vec<String>,
     shown_modified: bool,
     /// Unsaved even though the text matches the file: it was deleted on disk, or the encoding
     /// changed. Scintilla's own modified state only follows edits to the text.
@@ -125,6 +128,8 @@ pub unsafe fn new_tab() -> usize {
             stamp: None,
             look_gen: 0,
             language: None,
+            disk_notice: None,
+            waiters: Vec::new(),
             shown_modified: false,
             is_forced_modified: false,
         });
@@ -202,6 +207,7 @@ pub unsafe fn refresh() {
         (list, a.active.get())
     });
     tabs::set(list, active);
+    show_notice();
     update_title();
     update_status();
     window::sync_menu_checks();
@@ -291,6 +297,77 @@ unsafe fn zoom_percent(edit: HWND) -> isize {
 pub unsafe fn cmd_open() {
     for path in file_dialog(false) {
         open_path(&path);
+    }
+}
+
+/// Splits `file:line` and `file:line:col` (both counted from 1), the way compilers, grep and
+/// agents print locations. Windows file names cannot contain ':', so a trailing `:digits` is
+/// always a location and never part of the name.
+pub fn split_location(arg: &Path) -> (PathBuf, Option<(usize, usize)>) {
+    let text = arg.to_string_lossy();
+    let Some((head, last)) = split_number(&text) else {
+        return (arg.to_path_buf(), None);
+    };
+    match split_number(head) {
+        Some((path, line)) => (PathBuf::from(path), Some((line, last))),
+        None => (PathBuf::from(head), Some((last, 1))),
+    }
+}
+
+/// "name:12" as ("name", 12). The name must be longer than a drive letter.
+fn split_number(text: &str) -> Option<(&str, usize)> {
+    let (head, tail) = text.rsplit_once(':')?;
+    let n = tail.parse::<usize>().ok().filter(|&n| n > 0)?;
+    (head.len() > 1).then_some((head, n))
+}
+
+/// Opens a file given as `path`, `path:line` or `path:line:col` and moves the caret there.
+/// Returns the tab it is in.
+pub unsafe fn open_location(arg: &Path) -> Option<usize> {
+    let (path, location) = split_location(arg);
+    if !open_path(&path) {
+        return None;
+    }
+    let index = active_index();
+    if let Some((line, col)) = location {
+        let edit = edit_of(index);
+        editor::go_to(edit, line - 1, col - 1);
+    }
+    Some(index)
+}
+
+/// Remembers a `zpp --wait` caller to release when tab `index` closes.
+pub fn add_waiter(index: usize, waiter: &str) {
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        let waiters = &mut docs[index].waiters;
+        if !waiters.iter().any(|w| w == waiter) {
+            waiters.push(waiter.to_string());
+        }
+    });
+}
+
+/// Releases waiters of a closed tab that no other open tab is holding.
+unsafe fn release_waiters(waiters: &[String]) {
+    for w in waiters {
+        let is_held = app(|a| a.docs.borrow().iter().any(|d| d.waiters.contains(w)));
+        if !is_held {
+            wait::release(w);
+        }
+    }
+}
+
+/// On exit, every waiting caller is done.
+pub unsafe fn release_all_waiters() {
+    let waiters: Vec<String> = app(|a| {
+        a.docs
+            .borrow_mut()
+            .iter_mut()
+            .flat_map(|d| std::mem::take(&mut d.waiters))
+            .collect()
+    });
+    for w in &waiters {
+        wait::release(w);
     }
 }
 
@@ -429,6 +506,7 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         doc.path = Some(path.to_path_buf());
         doc.stamp = file::stamp(path);
         doc.is_forced_modified = false;
+        doc.disk_notice = None;
     });
     editor::set_saved(edit);
     if is_new_path {
@@ -470,6 +548,7 @@ pub unsafe fn close_tab(index: usize) -> bool {
         app(|a| a.edit.set(null_mut()));
     }
     DestroyWindow(doc.edit);
+    release_waiters(&doc.waiters);
     if count() == 0 {
         new_tab();
         return true;
@@ -489,7 +568,7 @@ pub unsafe fn confirm_exit() -> bool {
 }
 
 /// Called when z++ comes to the front and when a tab is shown: notices files changed or
-/// deleted by another program. Unchanged tabs reload quietly; tabs with edits ask first.
+/// deleted by another program. Unchanged tabs reload quietly; tabs with edits get a notice.
 pub unsafe fn check_disk(index: usize) {
     if app(|a| a.is_checking_disk.replace(true)) {
         return;
@@ -511,20 +590,19 @@ unsafe fn check_disk_inner(index: usize) {
         return;
     }
     app(|a| a.docs.borrow_mut()[index].stamp = now);
-    let name = path.display();
-    if now.is_none() {
+    // Ask through the notice bar, never a dialog: an agent may be editing the file right now.
+    let notice = if now.is_none() {
         force_modified(index);
+        Some(DiskNotice::Deleted)
+    } else if is_modified(index) {
+        Some(DiskNotice::Changed)
+    } else {
+        None
+    };
+    if notice.is_some() {
+        app(|a| a.docs.borrow_mut()[index].disk_notice = notice);
         refresh();
-        info_box(&format!("{name} was deleted or moved by another program.\n\nIt is still open in z++. Save it to keep it."));
         return;
-    }
-    if is_modified(index) {
-        let question = format!(
-            "{name} was changed by another program.\n\nReload it and lose your changes in z++?"
-        );
-        if ask_yes_no_cancel(&question) != Answer::Yes {
-            return;
-        }
     }
     if !reload(index, &path) {
         // Probably caught mid-write by the other program: look again next time.
@@ -537,20 +615,79 @@ unsafe fn reload(index: usize, path: &Path) -> bool {
         return false;
     };
     let edit = edit_of(index);
-    let caret = editor::selection(edit).start;
-    let top = editor::first_visible_line(edit);
-    editor::set_text(edit, &text, format.is_lf_only);
-    editor::select(edit, Span::at(editor::snap(edit, caret)));
-    editor::set_first_visible_line(edit, top);
+    // Only the changed lines are replaced, so the caret and scroll position stay put and the
+    // change margin shows what the other program changed.
+    let hunks = editor::replace_changed_lines(edit, &text, format.is_lf_only);
     fit_margin(edit);
     app(|a| {
         let mut docs = a.docs.borrow_mut();
         docs[index].format = format;
         docs[index].is_forced_modified = false;
+        docs[index].disk_notice = None;
     });
-    statusbar::set_message("Reloaded: the file changed on disk");
     refresh();
+    let noun = if hunks == 1 { "place" } else { "places" };
+    statusbar::set_message(&format!(
+        "Reloaded: changed on disk in {hunks} {noun} (Undo goes back)"
+    ));
     true
+}
+
+/// What the notice bar says about a tab's file.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DiskNotice {
+    /// Changed by another program while the tab had unsaved edits.
+    Changed,
+    Deleted,
+}
+
+const CHANGED_BUTTONS: [&str; 2] = ["Reload", "Keep mine"];
+const DELETED_BUTTONS: [&str; 2] = ["Save", "Dismiss"];
+
+/// Shows the active tab's notice, or hides the bar.
+unsafe fn show_notice() {
+    let active = active_index();
+    let notice = app(|a| {
+        let docs = a.docs.borrow();
+        let d = docs.get(active)?;
+        let name = label(d);
+        Some(match d.disk_notice? {
+            DiskNotice::Changed => notice::Notice {
+                text: format!("{name} changed on disk, and you have unsaved edits here."),
+                buttons: CHANGED_BUTTONS.to_vec(),
+            },
+            DiskNotice::Deleted => notice::Notice {
+                text: format!("{name} was deleted or moved on disk. It is still open here."),
+                buttons: DELETED_BUTTONS.to_vec(),
+            },
+        })
+    });
+    if notice::set(notice) {
+        window::layout();
+    }
+}
+
+/// A click on the notice bar's button `button`, for the active tab.
+pub unsafe fn on_notice_button(button: usize) {
+    let index = active_index();
+    let Some((kind, path)) = app(|a| {
+        let docs = a.docs.borrow();
+        let d = docs.get(index)?;
+        Some((d.disk_notice?, d.path.clone()?))
+    }) else {
+        return;
+    };
+    let clear = || app(|a| a.docs.borrow_mut()[index].disk_notice = None);
+    match (kind, button) {
+        (DiskNotice::Changed, 0) => {
+            reload(index, &path);
+        }
+        (DiskNotice::Deleted, 0) => {
+            save(index);
+        }
+        _ => clear(),
+    }
+    refresh();
 }
 
 /// Format > Encoding: the text stays the same; the next save writes the new encoding.

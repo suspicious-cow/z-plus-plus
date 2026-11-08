@@ -14,7 +14,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - New, Open (several files at once), Save, Save As, Save All. Drag files onto the window to open them.
 - z++ reopens last time's files and window size on start, and keeps the last 10 files under File > Recent Files.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
-- If another program changes an open file, z++ reloads it when you come back. If you have unsaved edits in that tab, it asks first.
+- If another program changes an open file, z++ reloads it, changing only the lines that differ and marking them in the margin. If you have unsaved edits in that tab, a bar above the text asks instead of a dialog. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
 - Line numbers (View > Line Numbers).
 - Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line. Find and Replace can match case, whole words, or a regular expression (ECMAScript syntax), and a replacement can use the groups the expression captured as `\1` to `\9`.
@@ -40,6 +40,38 @@ pwsh -File install.ps1
 The installer copies z++ to `%LOCALAPPDATA%\Programs\z++` and adds a Start menu shortcut, `zpp` in Win+R, "Edit with z++" on the right-click menu, and an entry in Settings > Apps for removing it. It registers z++ for the 91 file types that Windows Notepad and Notepad++ open, and makes z++ the default for any of them that has no default app yet. Windows 11 doesn't let an app take over a type that already has a default, such as `.txt` from Notepad, so switch those in Settings > Apps > Default apps: search for z++ there and pick it for each type. When another app can also open a type, Windows asks once the first time you open one; choose z++ and "Always". From a source checkout, run `pwsh -File scripts\install.ps1` after building.
 
 The exe is not code-signed yet, so Windows SmartScreen may warn the first time you run it.
+
+## Command line, git and coding agents
+
+```
+zpp file.txt                 open a file (in the z++ already running, if there is one)
+zpp src\main.rs:42           open at line 42
+zpp src\main.rs:42:7         open at line 42, character 7
+zpp --wait file.txt          return only once the file's tab is closed
+zpp --new-window file.txt    open in a separate window
+```
+
+`file:line` and `file:line:col` are the form compilers, grep and coding agents print, so a location can be pasted as it is.
+
+`--wait` (or `-w`) makes z++ usable as the editor for tools that wait on one. For git, run this once in PowerShell:
+
+```powershell
+git config --global core.editor "'$($env:LOCALAPPDATA -replace '\\','/')/Programs/z++/zpp.exe' --wait"
+```
+
+Other tools read the `EDITOR` or `VISUAL` environment variable. In Claude Code, Ctrl+G opens the prompt in an external editor; its docs do not say which variable it reads, so set both:
+
+```powershell
+[Environment]::SetEnvironmentVariable('EDITOR', "`"$env:LOCALAPPDATA\Programs\z++\zpp.exe`" --wait", 'User')
+[Environment]::SetEnvironmentVariable('VISUAL', "`"$env:LOCALAPPDATA\Programs\z++\zpp.exe`" --wait", 'User')
+```
+
+z++ also keeps up while an agent edits your files:
+
+- z++ checks the open file about once a second, even in the background. An unchanged tab reloads by itself, keeping your place.
+- A reload changes only the lines that differ and marks them in a thin margin left of the text. Your own unsaved edits get a mark there too. Undo goes back to the text before the reload.
+- If you have unsaved edits when the file changes on disk, a bar above the text offers Reload or Keep mine. Nothing pops up and nothing waits on you.
+- z++ never holds files open or locked, and it saves through a temporary file, so a save from z++ and a write from another program don't collide halfway.
 
 ## Keyboard shortcuts
 
@@ -94,6 +126,9 @@ Run the tests with `cargo test`.
 | [src/menu.rs](src/menu.rs) | Menu bar, command IDs, keyboard shortcuts |
 | [src/editor.rs](src/editor.rs) | The Scintilla edit control: text, selection, search |
 | [src/sci.rs](src/sci.rs) | Scintilla message numbers and the notification struct |
+| [src/notice.rs](src/notice.rs) | The bar above the text for "changed on disk" and similar news |
+| [src/diff.rs](src/diff.rs) | Line diff, so a reload replaces only the lines that changed |
+| [src/wait.rs](src/wait.rs) | `zpp --wait` |
 | [src/languages.rs](src/languages.rs) | Highlighted languages: lexer, file names, keywords, token kinds |
 | [src/syntax_colors.rs](src/syntax_colors.rs) | Code colors from the Notepad++ themes (generated) |
 | [build.rs](build.rs) | Compiles Scintilla and Lexilla from [vendor](vendor) into the exe |

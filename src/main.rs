@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod dialog;
+mod diff;
 mod docs;
 mod editor;
 mod file;
@@ -9,6 +10,7 @@ mod fonts;
 mod gdi;
 mod languages;
 mod menu;
+mod notice;
 mod prefs;
 mod sci;
 mod statusbar;
@@ -17,12 +19,15 @@ mod tabs;
 mod theme;
 mod themes;
 mod toolbar;
+mod wait;
 mod window;
 
 use std::path::PathBuf;
 
 /// Opens a separate z++ window instead of handing the files to the one already running.
 const NEW_WINDOW_FLAGS: [&str; 2] = ["--new-window", "-n"];
+/// Returns only after the files' tabs are closed, for use as $EDITOR (see wait.rs).
+const WAIT_FLAGS: [&str; 2] = ["--wait", "-w"];
 
 const CRASH_LOG: &str = "zpp-crash.txt";
 
@@ -52,15 +57,18 @@ fn install_crash_report() {
 fn main() {
     install_crash_report();
     let mut is_new_window = false;
+    let mut is_wait = false;
     let mut paths = Vec::new();
     for arg in std::env::args_os().skip(1) {
         if NEW_WINDOW_FLAGS.iter().any(|f| arg == *f) {
             is_new_window = true;
+        } else if WAIT_FLAGS.iter().any(|f| arg == *f) {
+            is_wait = true;
         } else {
             paths.push(PathBuf::from(arg));
         }
     }
-    let code = unsafe { window::run(paths, is_new_window) };
+    let code = unsafe { window::run(paths, is_new_window, is_wait) };
     std::process::exit(code);
 }
 
