@@ -431,6 +431,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_QUERYENDSESSION => docs::confirm_exit() as LRESULT,
+        // Logoff or shutdown ends the process without WM_DESTROY.
+        WM_ENDSESSION if wparam != 0 => {
+            docs::release_all_waiters();
+            save_session(hwnd);
+            save_prefs();
+            0
+        }
         WM_TIMER if wparam == DISK_TIMER_ID => {
             docs::check_disk(docs::active_index());
             0

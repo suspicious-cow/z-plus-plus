@@ -282,9 +282,9 @@ pub unsafe fn go_to(edit: HWND, line: usize, col: usize) {
     let line = line.min(line_count(edit) - 1);
     let start = line_start(edit, line);
     let end = send(edit, SCI_GETLINEENDPOSITION, line, 0);
+    // Clamped first: POSITIONRELATIVE gives 0 when it runs off the document.
+    let col = col.min(char_count(edit, Span { start, end }));
     let pos = send(edit, SCI_POSITIONRELATIVE, start as usize, col as isize);
-    // POSITIONRELATIVE gives 0 when it runs off the document.
-    let pos = if pos < start || pos > end { end } else { pos };
     send(edit, SCI_SETSEL, pos as usize, pos);
     send(edit, SCI_VERTICALCENTRECARET, 0, 0);
 }
@@ -549,6 +549,21 @@ mod tests {
                 String::from_utf16(&text(edit)).unwrap(),
                 "one\ntwo\nthree\n"
             );
+            DestroyWindow(edit);
+        }
+    }
+
+    #[test]
+    fn go_to_stops_at_the_line_end() {
+        let _turn = SCINTILLA.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            let edit = test_editor("héllo\nab");
+            go_to(edit, 0, 99);
+            assert_eq!(selection(edit), Span::at(6)); // é is two bytes
+            go_to(edit, 1, 1);
+            assert_eq!(selection(edit), Span::at(8));
+            go_to(edit, 9, 0);
+            assert_eq!(selection(edit), Span::at(7));
             DestroyWindow(edit);
         }
     }

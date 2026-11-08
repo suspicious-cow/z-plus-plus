@@ -36,6 +36,7 @@ const ID_FIND_ALL: u16 = IDOK as u16;
 const ID_CLOSE: u16 = IDCANCEL as u16;
 const DIALOG_SIZE: [i16; 2] = [300, 112];
 const MAX_PATH_UNITS: usize = 1024;
+const SEARCHING: &str = "Searching";
 
 thread_local! {
     static QUERY: RefCell<Query> = RefCell::new(Query::default());
@@ -215,7 +216,7 @@ unsafe fn start(hwnd: HWND, q: Query) -> bool {
     let mine = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     // HWNDs are not Send; the main window outlives the search or ignores its result.
     let main = app(|a| a.main.get()) as isize;
-    statusbar::set_message(&format!("Searching {} ...", q.folder.display()));
+    statusbar::set_message(&format!("{SEARCHING} {} ...", q.folder.display()));
     std::thread::spawn(move || {
         let outcome = search::run(&q, &re, &GENERATION, mine);
         let result = Box::into_raw(Box::new((q, outcome)));
@@ -244,12 +245,16 @@ pub unsafe fn on_done(generation: usize, lparam: LPARAM) {
     results::set(&q, &outcome);
     statusbar::set_message("");
     crate::window::layout();
+    crate::window::sync_menu_checks();
     docs::update_status();
 }
 
 /// Stops a running search, for example when the results panel is closed.
-pub fn cancel() {
+pub unsafe fn cancel() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
+    if statusbar::message().starts_with(SEARCHING) {
+        statusbar::set_message("");
+    }
 }
 
 unsafe fn browse(hwnd: HWND) {

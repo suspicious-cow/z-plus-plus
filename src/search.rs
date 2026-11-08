@@ -183,7 +183,7 @@ fn search_file(path: &Path, re: &Regex, limit: usize) -> Vec<Hit> {
 
 pub fn search_text(text: &str, re: &Regex, limit: usize) -> Vec<Hit> {
     let mut hits = Vec::new();
-    for (i, line) in text.lines().enumerate() {
+    for (i, line) in lines(text).enumerate() {
         for m in re.find_iter(line) {
             if hits.len() >= limit {
                 return hits;
@@ -192,6 +192,26 @@ pub fn search_text(text: &str, re: &Regex, limit: usize) -> Vec<Hit> {
         }
     }
     hits
+}
+
+/// Lines split at CRLF, LF or a lone CR, the same breaks the editor counts
+/// (file::normalize_line_breaks), so line numbers agree.
+fn lines(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let s = rest?;
+        match s.find(['\r', '\n']) {
+            Some(i) => {
+                let skip = if s[i..].starts_with("\r\n") { 2 } else { 1 };
+                rest = Some(&s[i + skip..]);
+                Some(&s[..i])
+            }
+            None => {
+                rest = None;
+                (!s.is_empty()).then_some(s)
+            }
+        }
+    })
 }
 
 fn hit(line_no: usize, line: &str, start: usize, end: usize) -> Hit {
@@ -233,6 +253,15 @@ mod tests {
         assert!(!matches_filter("*.rs", "main.rsx"));
         assert!(matches_filter("main.?s", "main.rs"));
         assert!(matches_filter("*test*", "my_tests.py"));
+    }
+
+    #[test]
+    fn line_numbers_count_every_kind_of_line_break() {
+        let re = build_regex(&query("x")).unwrap();
+        let hits = search_text("a\rb\r\nc\nx\r\rx", &re, 10);
+        let lines: Vec<_> = hits.iter().map(|h| h.line).collect();
+        assert_eq!(lines, vec![4, 6]);
+        assert!(hits.iter().all(|h| !h.text.contains('\r')));
     }
 
     #[test]

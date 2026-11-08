@@ -32,13 +32,23 @@ const START_POLL: Duration = Duration::from_millis(50);
 const EXIT_OK: i32 = 0;
 const EXIT_NOT_STARTED: i32 = 2;
 const EXIT_REFUSED: i32 = 3;
+/// z++ itself ended (crash, logoff, killed) before the tab was closed.
+const EXIT_EDITOR_ENDED: i32 = 4;
+
+const WAIT_EVENT: u32 = 0; // WAIT_OBJECT_0
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
 /// Opens `paths` in z++ and blocks until their tabs are closed. Returns the exit code.
 pub unsafe fn run(paths: &[PathBuf], class_name: *const u16) -> i32 {
     let Some(window) = find_or_start(class_name) else {
         return EXIT_NOT_STARTED;
     };
-    let name = format!("Local\\zpp-wait-{}", std::process::id());
+    // The time keeps a reused process ID from matching an older waiter's name.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let name = format!("Local\\zpp-wait-{}-{nanos}", std::process::id());
     let name_w = wide(&name);
     let event = CreateEventW(null(), 1, 0, name_w.as_ptr());
     if event.is_null() {
@@ -70,8 +80,9 @@ pub unsafe fn run(paths: &[PathBuf], class_name: *const u16) -> i32 {
             .filter(|h| !h.is_null())
             .collect();
         match WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE) {
+            WAIT_EVENT => EXIT_OK,
             WAIT_FAILED => EXIT_REFUSED,
-            _ => EXIT_OK,
+            _ => EXIT_EDITOR_ENDED,
         }
     };
     CloseHandle(event);
@@ -87,8 +98,7 @@ unsafe fn find_or_start(class_name: *const u16) -> Option<HWND> {
     if !existing.is_null() {
         return Some(existing);
     }
-    let exe = std::env::current_exe().ok()?;
-    std::process::Command::new(exe).spawn().ok()?;
+    start_detached()?;
     let started = Instant::now();
     while started.elapsed() < START_TIMEOUT {
         std::thread::sleep(START_POLL);
@@ -98,6 +108,27 @@ unsafe fn find_or_start(class_name: *const u16) -> Option<HWND> {
         }
     }
     None
+}
+
+/// Starts a z++ that outlives this waiter: no inherited console or pipes (a caller reading the
+/// editor's output would otherwise wait on it), and out of the caller's job when allowed.
+fn start_detached() -> Option<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let exe = std::env::current_exe().ok()?;
+    let spawn = |flags: u32| {
+        Command::new(&exe)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(flags)
+            .spawn()
+    };
+    // Breaking away fails in a job that forbids it; then stay in the job.
+    spawn(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
+        .or_else(|_| spawn(DETACHED_PROCESS))
+        .ok()
+        .map(|_| ())
 }
 
 /// Tells a waiting process its files are done. A waiter that is gone is ignored.

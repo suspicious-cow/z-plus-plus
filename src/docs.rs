@@ -36,6 +36,8 @@ pub struct Doc {
     disk_notice: Option<DiskNotice>,
     /// `zpp --wait` callers (event names) to release when this tab closes.
     waiters: Vec<String>,
+    /// The file was missing at the last disk check (see check_disk_inner).
+    is_missing: std::cell::Cell<bool>,
     shown_modified: bool,
     /// Unsaved even though the text matches the file: it was deleted on disk, or the encoding
     /// changed. Scintilla's own modified state only follows edits to the text.
@@ -130,6 +132,7 @@ pub unsafe fn new_tab() -> usize {
             language: None,
             disk_notice: None,
             waiters: Vec::new(),
+            is_missing: std::cell::Cell::new(false),
             shown_modified: false,
             is_forced_modified: false,
         });
@@ -415,26 +418,25 @@ unsafe fn read(path: &Path) -> Option<(Vec<u16>, Format)> {
     if path.is_dir() {
         return None;
     }
-    let bytes = match std::fs::read(path) {
-        Ok(b) => b,
-        Err(e) => {
-            error_box(&format!("Could not open {}:\n{e}", path.display()));
-            return None;
-        }
-    };
-    match file::decode(&bytes) {
-        Ok((text, format)) => Some((
-            file::normalize_line_breaks(&text, format.is_lf_only),
-            format,
-        )),
+    match read_quietly(path) {
+        Ok(read) => Some(read),
         Err(why) => {
-            error_box(&format!(
-                "z++ will not open {} because {why}.",
-                path.display()
-            ));
+            error_box(&why);
             None
         }
     }
+}
+
+/// Like `read`, but says why it failed instead of showing a dialog.
+fn read_quietly(path: &Path) -> Result<(Vec<u16>, Format), String> {
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
+    let (text, format) = file::decode(&bytes)
+        .map_err(|why| format!("z++ will not open {} because {why}.", path.display()))?;
+    Ok((
+        file::normalize_line_breaks(&text, format.is_lf_only),
+        format,
+    ))
 }
 
 fn find_open(path: &Path) -> Option<usize> {
@@ -509,8 +511,9 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         doc.disk_notice = None;
     });
     editor::set_saved(edit);
-    if is_new_path {
-        set_language(index, languages::for_path(path));
+    // A name with no known extension keeps the language the tab already has.
+    if let Some(language) = languages::for_path(path).filter(|_| is_new_path) {
+        set_language(index, Some(language));
     }
     refresh();
     if used.encoding != format.encoding {
@@ -587,9 +590,30 @@ unsafe fn check_disk_inner(index: usize) {
     };
     let now = file::stamp(&path);
     if now == old {
+        app(|a| a.docs.borrow()[index].is_missing.set(false));
         return;
     }
-    app(|a| a.docs.borrow_mut()[index].stamp = now);
+    if now.is_none() && !app(|a| a.docs.borrow()[index].is_missing.replace(true)) {
+        // Tools that save by deleting and renaming leave the file missing for a moment:
+        // only call it deleted if it is still gone at the next check.
+        return;
+    }
+    let was_deleted = app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        let d = &mut docs[index];
+        d.stamp = now;
+        d.is_missing.set(now.is_none());
+        // Back after a deletion: only real edits count as unsaved now.
+        let was_deleted = d.disk_notice == Some(DiskNotice::Deleted) && now.is_some();
+        if was_deleted {
+            d.is_forced_modified = false;
+            d.disk_notice = None;
+        }
+        was_deleted
+    });
+    if was_deleted {
+        refresh();
+    }
     // Ask through the notice bar, never a dialog: an agent may be editing the file right now.
     let notice = if now.is_none() {
         force_modified(index);
@@ -604,15 +628,19 @@ unsafe fn check_disk_inner(index: usize) {
         refresh();
         return;
     }
-    if !reload(index, &path) {
-        // Probably caught mid-write by the other program: look again next time.
-        app(|a| a.docs.borrow_mut()[index].stamp = old);
-    }
+    // A file that can't be read now is retried when it changes again, not every second.
+    reload(index, &path);
 }
 
+/// Replaces the tab's text with the file's. False, with the reason in the status bar, if the
+/// file can't be read.
 unsafe fn reload(index: usize, path: &Path) -> bool {
-    let Some((text, format)) = read(path) else {
-        return false;
+    let (text, format) = match read_quietly(path) {
+        Ok(read) => read,
+        Err(why) => {
+            statusbar::set_message(&why);
+            return false;
+        }
     };
     let edit = edit_of(index);
     // Only the changed lines are replaced, so the caret and scroll position stay put and the
@@ -626,10 +654,12 @@ unsafe fn reload(index: usize, path: &Path) -> bool {
         docs[index].disk_notice = None;
     });
     refresh();
-    let noun = if hunks == 1 { "place" } else { "places" };
-    statusbar::set_message(&format!(
-        "Reloaded: changed on disk in {hunks} {noun} (Undo goes back)"
-    ));
+    if hunks > 0 {
+        let noun = if hunks == 1 { "place" } else { "places" };
+        statusbar::set_message(&format!(
+            "Reloaded: changed on disk in {hunks} {noun} (Undo goes back)"
+        ));
+    }
     true
 }
 
