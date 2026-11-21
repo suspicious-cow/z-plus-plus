@@ -15,9 +15,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
-use crate::{editor, menu, notice, prefs, statusbar, tabs, theme, wait};
+use crate::{editor, mdview, menu, notice, prefs, statusbar, tabs, theme, wait};
 
 const UNTITLED: &str = "Untitled";
+const MARKDOWN: &str = "Markdown";
 const PATH_BUF_LEN: usize = 64 * 1024;
 const FILE_FILTER: &str = "All files\0*.*\0Text files\0*.txt\0\0";
 
@@ -42,6 +43,8 @@ pub struct Doc {
     /// Unsaved even though the text matches the file: it was deleted on disk, or the encoding
     /// changed. Scintilla's own modified state only follows edits to the text.
     is_forced_modified: bool,
+    /// Markdown shown formatted (mdview.rs) instead of as source.
+    pub is_rendered: bool,
 }
 
 impl Doc {
@@ -67,17 +70,102 @@ pub fn language_of(index: usize) -> Option<&'static Language> {
     languages::get(app(|a| a.docs.borrow().get(index).and_then(|d| d.language)))
 }
 
-/// Highlights tab `index` as `language` (None for plain text) and restyles it.
+/// Highlights tab `index` as `language` (None for plain text) and restyles it. A tab that is
+/// no longer Markdown goes back to showing its source.
 pub unsafe fn set_language(index: usize, language: Option<usize>) {
     let edit = edit_of(index);
+    let was_rendered = is_rendered(index);
+    let is_rendered = was_rendered && is_markdown(languages::get(language));
     app(|a| {
         let mut docs = a.docs.borrow_mut();
         docs[index].language = language;
+        docs[index].is_rendered = is_rendered;
         docs[index].look_gen = 0;
     });
-    editor::set_lexer(edit, languages::get(language));
+    editor::set_lexer(edit, lexer_language(index));
+    if was_rendered && !is_rendered {
+        editor::set_wrap(edit, app(|a| a.is_wrap.get()));
+    }
     style_if_stale(index);
     refresh();
+}
+
+fn is_markdown(language: Option<&Language>) -> bool {
+    language.is_some_and(|l| l.name == MARKDOWN)
+}
+
+pub fn is_rendered(index: usize) -> bool {
+    app(|a| a.docs.borrow().get(index).is_some_and(|d| d.is_rendered))
+}
+
+/// Whether the active tab can switch to the rendered view.
+pub fn is_active_markdown() -> bool {
+    is_markdown(language_of(active_index()))
+}
+
+/// The language the editor's lexer highlights: none while Markdown is rendered, because
+/// mdview styles the text itself.
+pub fn lexer_language(index: usize) -> Option<&'static Language> {
+    if is_rendered(index) {
+        None
+    } else {
+        language_of(index)
+    }
+}
+
+/// View > Rendered Markdown: switches the active tab between its Markdown source and the
+/// formatted view. Both edit the same text, and the caret stays where it was.
+pub unsafe fn toggle_rendered() {
+    let index = active_index();
+    let is_on = !is_rendered(index);
+    if is_on && !is_active_markdown() {
+        statusbar::set_message("Rendered view is for Markdown files (Language > Markdown)");
+        update_status();
+        return;
+    }
+    let edit = edit_of(index);
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        docs[index].is_rendered = is_on;
+        docs[index].look_gen = 0;
+    });
+    editor::set_lexer(edit, lexer_language(index));
+    // Paragraphs are single long lines, so the formatted view always wraps them on screen.
+    editor::set_wrap(edit, is_on || app(|a| a.is_wrap.get()));
+    style_if_stale(index);
+    editor::scroll_caret(edit);
+    statusbar::set_message(if is_on {
+        "Rendered Markdown: edits go straight into the Markdown"
+    } else {
+        "Markdown source"
+    });
+    refresh();
+}
+
+/// Rendered styles on top of the base look, for a tab showing formatted Markdown.
+pub unsafe fn style_rendered(index: usize, look: &theme::Look) {
+    if is_rendered(index) {
+        let edit = edit_of(index);
+        mdview::apply_styles(edit, look);
+        mdview::restyle(edit);
+    }
+}
+
+fn is_rendered_edit(edit: HWND) -> bool {
+    app(|a| {
+        a.docs
+            .borrow()
+            .iter()
+            .any(|d| d.edit == edit && d.is_rendered)
+    })
+}
+
+/// SCN_STYLENEEDED, and caret moves: restyles a rendered tab, which also shows the markup
+/// next to the caret and hides the markup it left.
+pub unsafe fn restyle_if_rendered(edit: HWND) {
+    if is_rendered_edit(edit) {
+        mdview::restyle(edit);
+    }
 }
 
 pub fn active_index() -> usize {
@@ -135,6 +223,7 @@ pub unsafe fn new_tab() -> usize {
             is_missing: std::cell::Cell::new(false),
             shown_modified: false,
             is_forced_modified: false,
+            is_rendered: false,
         });
         docs.len() - 1
     });
@@ -172,16 +261,14 @@ unsafe fn style_if_stale(index: usize) {
     }
     let (colors, syntax, face, size) = window::look_parts();
     let edit = edit_of(index);
-    theme::style_editor(
-        edit,
-        &theme::Look {
-            colors,
-            syntax,
-            face: &face,
-            size_tenths: size,
-        },
-        language_of(index),
-    );
+    let look = theme::Look {
+        colors,
+        syntax,
+        face: &face,
+        size_tenths: size,
+    };
+    theme::style_editor(edit, &look, lexer_language(index));
+    style_rendered(index, &look);
     fit_margin(edit);
     app(|a| a.docs.borrow_mut()[index].look_gen = gen);
 }

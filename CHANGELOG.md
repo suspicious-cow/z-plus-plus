@@ -6,6 +6,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button on the toolbar): a Markdown tab shows its text formatted and stays editable. Markup is hidden until the caret is inside it, and nothing is converted, so text you don't edit keeps its exact bytes and Save writes the same file.
 - Find in Files (Ctrl+Shift+F) with a file filter, match case, whole word and regular expressions. It searches on a background thread, skips build and dependency folders and binary files, and lists hits in a panel under the text; double-click a hit to open it. View > Search Results hides the panel.
 - `zpp file:42` and `zpp file:42:7` open a file at a line and column, the form compilers and coding agents print.
 - `zpp --wait` returns only once the file's tab is closed, so z++ can be the editor for git and other tools.

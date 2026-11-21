@@ -489,10 +489,14 @@ unsafe fn on_notify(lparam: LPARAM) {
     match hdr.code {
         sci::SCN_UPDATEUI if is_active => {
             let n = &*(lparam as *const SCNotification);
+            if n.updated & sci::SC_UPDATE_SELECTION != 0 {
+                docs::restyle_if_rendered(hdr.hwndFrom);
+            }
             if n.updated & (sci::SC_UPDATE_SELECTION | sci::SC_UPDATE_CONTENT) != 0 {
                 docs::update_status();
             }
         }
+        sci::SCN_STYLENEEDED => docs::restyle_if_rendered(hdr.hwndFrom),
         sci::SCN_ZOOM => {
             docs::fit_margin(hdr.hwndFrom);
             if is_active {
@@ -631,6 +635,7 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_EOL_CRLF => docs::set_line_endings(false),
         IDM_EOL_LF => docs::set_line_endings(true),
         IDM_WRAP => toggle_wrap(),
+        IDM_RENDERED => docs::toggle_rendered(),
         IDM_TOGGLE_DARK => toggle_dark(),
         IDM_TEXT_COLOR => pick_color(true),
         IDM_BACK_COLOR => pick_color(false),
@@ -800,7 +805,7 @@ unsafe fn apply_look() {
 /// Other tabs are restyled when they are next shown (docs::activate).
 unsafe fn paint_look() {
     let (colors, syntax, face, size) = look_parts();
-    let language = docs::language_of(docs::active_index());
+    let language = docs::lexer_language(docs::active_index());
     let (main, edit, gen) = app(|a| {
         let gen = a.look_gen.get() + 1;
         a.look_gen.set(gen);
@@ -815,6 +820,9 @@ unsafe fn paint_look() {
         size_tenths: size,
     };
     theme::apply(main, edit, &look, language);
+    if !edit.is_null() {
+        docs::style_rendered(docs::active_index(), &look);
+    }
     if !results::panel().is_null() {
         theme::style_editor(results::panel(), &look, None);
         results::apply_syntax(&syntax);
@@ -862,6 +870,9 @@ pub unsafe fn sync_menu_checks() {
     let format = docs::active_format();
     let language = app(|a| a.docs.borrow().get(a.active.get()).and_then(|d| d.language));
     let is_results_shown = results::is_shown();
+    let is_rendered = docs::is_rendered(docs::active_index());
+    let is_markdown = docs::is_active_markdown();
+    toolbar::set_rendered(is_rendered);
     app(|a| {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();
@@ -876,6 +887,8 @@ pub unsafe fn sync_menu_checks() {
                 is_status_bar: a.is_status_bar.get(),
                 is_line_numbers: a.is_line_numbers.get(),
                 is_results: is_results_shown,
+                is_rendered,
+                is_markdown,
                 format,
                 language,
             },
@@ -1016,15 +1029,21 @@ unsafe fn font_dialog() {
     apply_look();
 }
 
-/// Word wrap applies to every tab.
+/// Word wrap applies to every tab; rendered Markdown always wraps.
 unsafe fn toggle_wrap() {
     let is_wrap = app(|a| {
         a.is_wrap.set(!a.is_wrap.get());
         a.is_wrap.get()
     });
-    let edits: Vec<HWND> = app(|a| a.docs.borrow().iter().map(|d| d.edit).collect());
-    for edit in edits {
-        editor::set_wrap(edit, is_wrap);
+    let edits: Vec<(HWND, bool)> = app(|a| {
+        a.docs
+            .borrow()
+            .iter()
+            .map(|d| (d.edit, d.is_rendered))
+            .collect()
+    });
+    for (edit, is_rendered) in edits {
+        editor::set_wrap(edit, is_wrap || is_rendered);
     }
     sync_controls();
 }

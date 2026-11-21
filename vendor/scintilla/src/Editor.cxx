@@ -2834,6 +2834,14 @@ void Editor::NotifyModified(Document *, DocModification mh, void *) {
 		}
 		if (FlagSet(mh.modificationType, ModificationFlags::ChangeStyle)) {
 			view.llc.Invalidate(LineLayout::ValidLevel::checkTextAndStyle);
+			// z++ patch: restyling text the container already styled can change its width
+			// (z++'s rendered Markdown hides and shows markup), so wrapped lines must be
+			// rewrapped or they keep their old number of display lines. Lexers are unaffected.
+			const LexInterface *lexer = pdoc->GetLexInterface();
+			if (Wrapping() && (!lexer || lexer->UseContainerLexing())) {
+				NeedWrapping(pdoc->SciLineFromPosition(mh.position),
+					pdoc->SciLineFromPosition(mh.position + mh.length) + 1);
+			}
 		}
 	} else {
 		if (FlagSet(undoSelectionHistoryOption, UndoSelectionHistoryOption::Enabled) &&

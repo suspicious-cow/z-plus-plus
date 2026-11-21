@@ -173,6 +173,12 @@ const GROUPS: &[Group] = &[
             &[
                 small(IDM_WRAP, 0xE751, "Wrap", "Word wrap (Alt+Z)"),
                 small(
+                    IDM_RENDERED,
+                    0xE736,
+                    "Rendered",
+                    "Rendered Markdown (Ctrl+Shift+M)",
+                ),
+                small(
                     IDM_TOGGLE_DARK,
                     0xE708,
                     "Light",
@@ -220,6 +226,7 @@ struct Toolbar {
     is_tracking: Cell<bool>,
     colors: Cell<Colors>,
     is_wrap: Cell<bool>,
+    is_rendered: Cell<bool>,
     combos: Cell<[HWND; 3]>,
     ui_font: Cell<HFONT>,
     icon_font: Cell<HFONT>,
@@ -244,6 +251,7 @@ thread_local! {
         is_tracking: Cell::new(false),
         colors: Cell::new(themes::PRESETS[0].colors),
         is_wrap: Cell::new(false),
+        is_rendered: Cell::new(false),
         combos: Cell::new([null_mut(); 3]),
         ui_font: Cell::new(null_mut()),
         icon_font: Cell::new(null_mut()),
@@ -526,6 +534,14 @@ pub unsafe fn set_colors(colors: Colors) {
         }
     });
     InvalidateRect(tb(|t| t.hwnd.get()), null(), 0);
+}
+
+/// Lights the Rendered button while the active tab shows formatted Markdown.
+pub unsafe fn set_rendered(is_rendered: bool) {
+    let (hwnd, was) = tb(|t| (t.hwnd.get(), t.is_rendered.replace(is_rendered)));
+    if was != is_rendered && !hwnd.is_null() {
+        InvalidateRect(hwnd, null(), 0);
+    }
 }
 
 /// Brings the dropdowns, toggles and colors up to date with the app.
@@ -849,7 +865,7 @@ unsafe fn paint(hwnd: HWND) {
 }
 
 unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
-    let (rect, id, glyph, label, kind, hot, pressed, is_wrap) = tb(|t| {
+    let (rect, id, glyph, label, kind, hot, pressed, is_wrap, is_rendered) = tb(|t| {
         let b = &t.buttons.borrow()[index];
         (
             b.rect,
@@ -860,11 +876,12 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
             t.hot.get(),
             t.pressed.get(),
             t.is_wrap.get(),
+            t.is_rendered.get(),
         )
     });
     let is_hot = hot == Some(index);
     let is_down = is_hot && pressed == Some(index);
-    let is_on = id == IDM_WRAP && is_wrap;
+    let is_on = (id == IDM_WRAP && is_wrap) || (id == IDM_RENDERED && is_rendered);
     if is_down || is_hot || is_on {
         let mix = if is_down { DOWN_MIX } else { HOT_MIX };
         round_fill(

@@ -267,6 +267,10 @@ pub unsafe fn select(edit: HWND, span: Span) {
     send(edit, SCI_SCROLLCARET, 0, 0);
 }
 
+pub unsafe fn scroll_caret(edit: HWND) {
+    send(edit, SCI_SCROLLCARET, 0, 0);
+}
+
 /// Line and column of the caret, both counted from 1. Columns count characters.
 pub unsafe fn caret_line_col(edit: HWND) -> (usize, usize) {
     let caret = send(edit, SCI_GETCURRENTPOS, 0, 0);
@@ -430,17 +434,17 @@ pub unsafe fn selected_text(edit: HWND) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::ptr::null_mut;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 
     /// Scintilla is used from one thread in z++, so tests take turns.
-    static SCINTILLA: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) static SCINTILLA: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static REGISTER: std::sync::Once = std::sync::Once::new();
 
     /// A hidden Scintilla window for tests.
-    unsafe fn test_editor(text: &str) -> HWND {
+    pub(crate) unsafe fn test_editor(text: &str) -> HWND {
         let hinst = GetModuleHandleW(null());
         REGISTER.call_once(|| register(hinst));
         let edit = CreateWindowExW(

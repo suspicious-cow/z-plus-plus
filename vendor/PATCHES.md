@@ -16,3 +16,5 @@ Both are under the license in their `License.txt`. Git stores every file with LF
 ## Changes to the upstream source
 
 `scintilla/win32/ScintillaWin.cxx`: Scintilla accepts only dragged text, so files dragged from Explorer onto the text were refused. The patch (marked `z++ patch`) accepts `CF_HDROP` in `DragEnter`, `DragOver` and `Drop`, and sends the drop handle to the parent window as `WM_APP + 7`. The parent opens the files and must not call `DragFinish`.
+
+`scintilla/src/Editor.cxx`: when the container restyles text that is already wrapped, Scintilla repaints it but does not rewrap it, so a line whose width changed keeps its old number of display lines (cut off, or with a blank line under it). z++'s rendered Markdown hides and shows markup this way. The patch (marked `z++ patch`, in `Editor::NotifyModified`) marks the restyled lines for rewrapping when wrapping is on and no lexer is set. Text styled by a Lexilla lexer is unaffected.

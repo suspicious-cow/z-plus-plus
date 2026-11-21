@@ -90,6 +90,12 @@ pub const SCI_SETTARGETRANGE: u32 = 2686;
 pub const SCI_SETELEMENTCOLOUR: u32 = 2753;
 pub const SCI_SETCHANGEHISTORY: u32 = 2780;
 pub const SCI_STARTSTYLING: u32 = 2032;
+pub const SCI_SETSTYLINGEX: u32 = 2073;
+pub const SCI_STYLESETVISIBLE: u32 = 2074;
+pub const SCI_STYLESETEOLFILLED: u32 = 2057;
+pub const SCI_STYLESETUNDERLINE: u32 = 2059;
+pub const SCI_GETCHARACTERPOINTER: u32 = 2520;
+pub const SCN_STYLENEEDED: u32 = 2000;
 pub const SCI_SETSTYLING: u32 = 2033;
 pub const SCI_SETREADONLY: u32 = 2171;
 pub const SCI_GOTOLINE: u32 = 2024;
@@ -185,3 +191,7 @@ pub struct SCNotification {
     pub list_completion_method: i32,
     pub character_source: i32,
 }
+pub const SCI_CANUNDO: u32 = 2174;
+pub const SCI_GETSELECTIONS: u32 = 2570;
+pub const SCI_GETSELECTIONNSTART: u32 = 2585;
+pub const SCI_GETSELECTIONNEND: u32 = 2587;

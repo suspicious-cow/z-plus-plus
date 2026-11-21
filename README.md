@@ -17,13 +17,16 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - If another program changes an open file, z++ reloads it, changing only the lines that differ and marking them in the margin. If you have unsaved edits in that tab, a bar above the text asks instead of a dialog. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
 - Find in Files (Ctrl+Shift+F): search a folder and its subfolders, with a file filter such as `*.rs;*.toml`. Version control, dependency and build folders (`.git`, `node_modules`, `target`, `.venv` and similar) are skipped, and so are binary files. The hits fill a panel under the text; double-click one to open the file at that spot. Regular expressions here use [Rust's regex syntax](https://docs.rs/regex/latest/regex/#syntax) (no backreferences or lookaround), which keeps searches fast on big folders.
+- Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button) shows a Markdown tab formatted, with larger headings, bold and italic, inline code, underlined links, block quotes, lists, and tables, and you can keep typing in it. z++ does not convert anything: the tab still holds the Markdown and only hides markup such as `**`, `# `, and a link's `](address)` until the caret reaches it, where it shows dimmed so you can edit it. Lines you don't touch keep their exact bytes, so paragraphs are not reflowed, list markers stay as you typed them, and z++ never adds line breaks. Long lines wrap on screen only. Switching back and forth keeps the caret where it was, and Save writes the same `.md`. Tables keep their pipes instead of lining up in columns, and setext headings, reference-style links, and raw HTML show as plain text.
+
+  ![Rendered Markdown](docs/screenshots/rendered-markdown.png)
 - Line numbers (View > Line Numbers).
 - Find, Find Next and Previous, Replace and Replace All (one undo step), and Go to Line. Find and Replace can match case, whole words, or a regular expression (ECMAScript syntax), and a replacement can use the groups the expression captured as `\1` to `\9`.
 - A status bar with line and column, the selection size, zoom, line endings and encoding. Click the encoding or line endings to change them; Format > Encoding and Format > Line Endings do the same.
 - Files keep their encoding (UTF-8, UTF-8 with BOM, UTF-16 LE or ANSI) and their LF line endings unless you change them. z++ refuses to open a file it could not save back unchanged, such as a binary file, instead of damaging it.
 - 32 color themes, including all 22 that ship with Notepad++, plus your own text and background colors. Point at a theme in View > Theme or in the toolbar's theme list and the whole window shows it right away; move off it or press Escape to go back. Dark themes also darken the title bar, menus and scroll bars.
 - 11 open-licensed monospace fonts built into the exe, the usual Windows monospace fonts, and any font installed on the machine.
-- A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, find, font, size, colors, theme and word wrap. View > Toolbar and View > Status Bar hide those bars.
+- A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, find, font, size, colors, theme, word wrap, and rendered Markdown. View > Toolbar and View > Status Bar hide those bars.
 - Settings are saved per user under `HKCU\Software\z++`.
 
 | Solarized Light with Fira Mono | Nord with JetBrains Mono |
@@ -90,6 +93,7 @@ z++ also keeps up while an agent edits your files:
 | Go to line | Ctrl+G |
 | Bigger, smaller, reset font size | Ctrl+=, Ctrl+-, Ctrl+0 |
 | Word wrap | Alt+Z |
+| Rendered Markdown on or off | Ctrl+Shift+M |
 | Switch between your last light and dark theme | Ctrl+Shift+D |
 
 ## Building
@@ -134,6 +138,7 @@ Run the tests with `cargo test`.
 | [src/notice.rs](src/notice.rs) | The bar above the text for "changed on disk" and similar news |
 | [src/diff.rs](src/diff.rs) | Line diff, so a reload replaces only the lines that changed |
 | [src/wait.rs](src/wait.rs) | `zpp --wait` |
+| [src/mdview.rs](src/mdview.rs) | Rendered Markdown: styles the Markdown text so it reads formatted |
 | [src/languages.rs](src/languages.rs) | Highlighted languages: lexer, file names, keywords, token kinds |
 | [src/syntax_colors.rs](src/syntax_colors.rs) | Code colors from the Notepad++ themes (generated) |
 | [build.rs](build.rs) | Compiles Scintilla and Lexilla from [vendor](vendor) into the exe |

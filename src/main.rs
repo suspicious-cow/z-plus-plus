@@ -10,6 +10,7 @@ mod findfiles;
 mod fonts;
 mod gdi;
 mod languages;
+mod mdview;
 mod menu;
 mod notice;
 mod prefs;

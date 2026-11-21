@@ -1,3 +1,5 @@
 /target
 # Agent memory stays local: this repo is public.
 /memory/
+# Real documents used by the round-trip tests; private, never committed.
+/tests/fixtures/private/

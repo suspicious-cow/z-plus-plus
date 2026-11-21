@@ -41,6 +41,7 @@ pub const IDM_FONT_DIALOG: u16 = 130;
 pub const IDM_FONT_BIGGER: u16 = 131;
 pub const IDM_FONT_SMALLER: u16 = 132;
 pub const IDM_FONT_RESET: u16 = 133;
+pub const IDM_RENDERED: u16 = 134;
 pub const IDM_LICENSES: u16 = 140;
 pub const IDM_ABOUT: u16 = 141;
 pub const IDM_ENC_UTF8: u16 = 150;
@@ -97,6 +98,9 @@ pub struct Checks<'a> {
     pub is_status_bar: bool,
     pub is_line_numbers: bool,
     pub is_results: bool,
+    pub is_rendered: bool,
+    /// The active tab is Markdown, so it can be rendered.
+    pub is_markdown: bool,
     pub format: Format,
     pub language: Option<usize>,
 }
@@ -202,6 +206,8 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (IDM_STATUS_BAR, "&Status Bar"),
         (IDM_LINE_NUMBERS, "Line &Numbers"),
         (IDM_RESULTS, "Search &Results"),
+        SEPARATOR,
+        (IDM_RENDERED, "Rendered &Markdown\tCtrl+Shift+M"),
         SEPARATOR,
         (IDM_NEXT_TAB, "&Next Tab\tCtrl+Tab"),
         (IDM_PREV_TAB, "&Previous Tab\tCtrl+Shift+Tab"),
@@ -322,6 +328,13 @@ pub unsafe fn update_checks(bar: HMENU, c: &Checks) {
     check(bar, IDM_LINE_NUMBERS, c.is_line_numbers);
     check(bar, IDM_RESULTS, c.is_results);
     check(bar, IDM_WRAP, c.is_wrap);
+    check(bar, IDM_RENDERED, c.is_rendered);
+    let enabled = if c.is_markdown || c.is_rendered {
+        MF_ENABLED
+    } else {
+        MF_GRAYED
+    };
+    EnableMenuItem(bar, IDM_RENDERED as u32, MF_BYCOMMAND | enabled);
     let last_theme = theme_id(themes::PRESETS.len());
     CheckMenuRadioItem(
         bar,
@@ -402,6 +415,7 @@ pub unsafe fn accelerators() -> HACCEL {
         acc(ctrl, b'G' as u16, IDM_GOTO),
         acc(ctrl_shift, b'D' as u16, IDM_TOGGLE_DARK),
         acc(alt, b'Z' as u16, IDM_WRAP),
+        acc(ctrl_shift, b'M' as u16, IDM_RENDERED),
         acc(ctrl, VK_OEM_PLUS, IDM_FONT_BIGGER),
         acc(ctrl, VK_ADD, IDM_FONT_BIGGER),
         acc(ctrl, VK_OEM_MINUS, IDM_FONT_SMALLER),
