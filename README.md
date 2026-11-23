@@ -12,7 +12,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 
 - Tabs: each open file gets a tab with its own undo history. A dot on a tab means unsaved changes. Opening a file that is already open switches to its tab, and a file opened from Explorer while z++ is running opens as a new tab in that window (`zpp.exe --new-window` opens a second window instead).
 - New, Open (several files at once), Save, Save As, Save All. Drag files onto the window to open them.
-- z++ reopens last time's files and window size on start, and keeps the last 10 files under File > Recent Files.
+- z++ remembers what you were working on, like Notepad++. It reopens every tab you had open, in the same order, with the same tab in front and the caret and scroll where you left them, even after a crash or a forced restart (it saves the list every couple of seconds). A tab you close yourself drops out. Unsaved edits are kept too: closing z++ doesn't ask, and next time those tabs come back still unsaved, with Undo going back to the file's text. File > Remember Unsaved Changes turns that off. File > Recent Files keeps the last 20 files.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
 - If another program changes or deletes an open file, z++ asks what to do in its own dialog: reload, keep your version, or compare the two. A reload changes only the lines that differ and marks them in the margin. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
@@ -123,6 +123,7 @@ Run the tests with `cargo test`.
 | --- | --- |
 | [src/window.rs](src/window.rs) | Main window, layout, commands, themes and fonts |
 | [src/docs.rs](src/docs.rs) | Open files: tabs, open, save, close, reload, recent files, session |
+| [src/session.rs](src/session.rs) | The saved tab list and the backup files that keep unsaved edits between runs |
 | [src/toolbar.rs](src/toolbar.rs) | The toolbar, drawn in the current theme's colors |
 | [src/tabs.rs](src/tabs.rs) | The tab strip |
 | [src/statusbar.rs](src/statusbar.rs) | The status bar |

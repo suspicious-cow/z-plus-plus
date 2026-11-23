@@ -11,9 +11,9 @@ use windows_sys::Win32::System::Registry::{
     RRF_RT_REG_DWORD, RRF_RT_REG_MULTI_SZ, RRF_RT_REG_SZ,
 };
 
-use crate::fonts;
 use crate::profile::prefs_key;
 use crate::themes::{self, Colors};
+use crate::{fonts, session};
 
 const PERSONALIZE_KEY: *const u16 =
     w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
@@ -21,10 +21,10 @@ const MAX_STRING_UNITS: u32 = 256;
 /// Enough for the recent-files list and a session of long paths.
 const MAX_MULTI_STRING_UNITS: usize = 64 * 1024;
 
-/// The open files and window position, saved on exit and restored on the next start.
+/// The open tabs and window position, restored on the next start.
 #[derive(Default)]
 pub struct Session {
-    pub files: Vec<PathBuf>,
+    pub tabs: Vec<session::Tab>,
     pub active: usize,
     pub recent: Vec<PathBuf>,
     pub window: Option<RECT>,
@@ -42,6 +42,8 @@ pub struct Prefs {
     pub is_toolbar: bool,
     pub is_status_bar: bool,
     pub is_line_numbers: bool,
+    /// Closing z++ keeps unsaved edits in backup files instead of asking (like Notepad++).
+    pub is_remember_unsaved: bool,
 }
 
 pub fn load() -> Prefs {
@@ -65,6 +67,8 @@ pub fn load() -> Prefs {
             .is_none_or(|v| v != 0),
         is_line_numbers: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("LineNumbers"))
             .is_none_or(|v| v != 0),
+        is_remember_unsaved: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("RememberUnsaved"))
+            .is_none_or(|v| v != 0),
     }
 }
 
@@ -85,7 +89,7 @@ pub fn load_session() -> Session {
         _ => None,
     };
     Session {
-        files: read_paths(w!("SessionFiles")),
+        tabs: load_tabs(),
         active: dword(w!("SessionActive")).unwrap_or(0) as usize,
         recent: read_paths(w!("RecentFiles")),
         window,
@@ -93,9 +97,28 @@ pub fn load_session() -> Session {
     }
 }
 
+/// Tabs saved by this version, or the plain file list an older z++ saved.
+fn load_tabs() -> Vec<session::Tab> {
+    match read_strings(w!("SessionTabs")) {
+        Some(records) => records.iter().filter_map(|r| session::decode(r)).collect(),
+        None => read_paths(w!("SessionFiles"))
+            .into_iter()
+            .map(|p| session::Tab {
+                path: Some(p),
+                ..Default::default()
+            })
+            .collect(),
+    }
+}
+
+/// The open tabs and which one is showing; written whenever they change.
+pub fn save_tabs(records: &[String], active: usize) {
+    write_strings(w!("SessionTabs"), records);
+    write_dword(w!("SessionActive"), active as u32);
+}
+
+/// Window position and the recent files, written on exit.
 pub fn save_session(session: &Session) {
-    write_paths(w!("SessionFiles"), &session.files);
-    write_dword(w!("SessionActive"), session.active as u32);
     write_paths(w!("RecentFiles"), &session.recent);
     if let Some(rc) = session.window {
         write_dword(w!("WindowLeft"), rc.left as u32);
@@ -106,12 +129,26 @@ pub fn save_session(session: &Session) {
     write_dword(w!("WindowMaximized"), session.is_maximized as u32);
 }
 
+/// The recent files another z++ window may have saved since this one started.
+pub fn load_recent() -> Vec<PathBuf> {
+    read_paths(w!("RecentFiles"))
+}
+
 /// Recent files are saved as soon as they change, so a crash does not lose the list.
 pub fn save_recent(recent: &[PathBuf]) {
     write_paths(w!("RecentFiles"), recent);
 }
 
 fn read_paths(name: *const u16) -> Vec<PathBuf> {
+    read_strings(name)
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// A REG_MULTI_SZ value's strings; None if the value does not exist.
+fn read_strings(name: *const u16) -> Option<Vec<String>> {
     let mut buf = vec![0u16; MAX_MULTI_STRING_UNITS];
     let mut size = (buf.len() * 2) as u32;
     let status = unsafe {
@@ -126,19 +163,29 @@ fn read_paths(name: *const u16) -> Vec<PathBuf> {
         )
     };
     if status != ERROR_SUCCESS {
-        return Vec::new();
+        return None;
     }
     buf.truncate(size as usize / 2);
-    buf.split(|&c| c == 0)
-        .filter(|s| !s.is_empty())
-        .map(|s| PathBuf::from(String::from_utf16_lossy(s)))
-        .collect()
+    Some(
+        buf.split(|&c| c == 0)
+            .filter(|s| !s.is_empty())
+            .map(String::from_utf16_lossy)
+            .collect(),
+    )
 }
 
 fn write_paths(name: *const u16, paths: &[PathBuf]) {
+    let strings: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    write_strings(name, &strings);
+}
+
+fn write_strings(name: *const u16, strings: &[String]) {
     let mut units: Vec<u16> = Vec::new();
-    for p in paths {
-        units.extend(p.to_string_lossy().encode_utf16());
+    for s in strings {
+        units.extend(s.encode_utf16());
         units.push(0);
     }
     units.push(0);
@@ -169,6 +216,7 @@ pub fn save(prefs: &Prefs) {
     write_dword(w!("Toolbar"), prefs.is_toolbar as u32);
     write_dword(w!("StatusBar"), prefs.is_status_bar as u32);
     write_dword(w!("LineNumbers"), prefs.is_line_numbers as u32);
+    write_dword(w!("RememberUnsaved"), prefs.is_remember_unsaved as u32);
 }
 
 /// v0.1 stored only DarkMode. Without either, follow the Windows app theme.

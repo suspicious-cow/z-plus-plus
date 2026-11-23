@@ -42,6 +42,7 @@ pub const IDM_FONT_BIGGER: u16 = 131;
 pub const IDM_FONT_SMALLER: u16 = 132;
 pub const IDM_FONT_RESET: u16 = 133;
 pub const IDM_RENDERED: u16 = 134;
+pub const IDM_REMEMBER_UNSAVED: u16 = 135;
 pub const IDM_LICENSES: u16 = 140;
 pub const IDM_ABOUT: u16 = 141;
 pub const IDM_ENC_UTF8: u16 = 150;
@@ -58,7 +59,7 @@ pub const IDM_FONT_BASE: u16 = 300;
 pub const IDM_LANGUAGE_BASE: u16 = 600;
 /// Recent file n is IDM_RECENT_BASE + n.
 pub const IDM_RECENT_BASE: u16 = 500;
-pub const MAX_RECENT: usize = 10;
+pub const MAX_RECENT: usize = 20;
 
 const VK_TAB: u16 = 0x09;
 const VK_PRIOR: u16 = 0x21;
@@ -90,6 +91,7 @@ pub struct Menus {
 
 /// What the menus show as checked.
 pub struct Checks<'a> {
+    pub is_remember_unsaved: bool,
     pub theme: usize,
     pub font_list: &'a [String],
     pub face: &'a str,
@@ -156,11 +158,12 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (IDM_SAVE_ALL, "Sa&ve All"),
         SEPARATOR,
         (IDM_CLOSE_TAB, "&Close Tab\tCtrl+W"),
+        (IDM_REMEMBER_UNSAVED, "Re&member Unsaved Changes"),
         SEPARATOR,
         SEPARATOR,
         (IDM_EXIT, "E&xit"),
     ]);
-    insert_submenu(file, 8, recent, "&Recent Files");
+    insert_submenu(file, 9, recent, "&Recent Files");
     let edit = popup(&[
         (IDM_UNDO, "&Undo\tCtrl+Z"),
         (IDM_REDO, "&Redo\tCtrl+Y"),
@@ -326,6 +329,7 @@ pub unsafe fn update_checks(bar: HMENU, c: &Checks) {
     check(bar, IDM_TOOLBAR, c.is_toolbar);
     check(bar, IDM_STATUS_BAR, c.is_status_bar);
     check(bar, IDM_LINE_NUMBERS, c.is_line_numbers);
+    check(bar, IDM_REMEMBER_UNSAVED, c.is_remember_unsaved);
     check(bar, IDM_RESULTS, c.is_results);
     check(bar, IDM_WRAP, c.is_wrap);
     check(bar, IDM_RENDERED, c.is_rendered);

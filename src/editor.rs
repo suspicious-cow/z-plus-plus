@@ -213,6 +213,31 @@ pub unsafe fn is_modified(edit: HWND) -> bool {
     send(edit, SCI_GETMODIFY, 0, 0) != 0
 }
 
+/// Replaces all text with `text` as one undoable edit, leaving the tab unsaved, so Undo goes
+/// back to the file's text. Used to bring back unsaved edits kept from last time.
+pub unsafe fn replace_all_unsaved(edit: HWND, text: &str) {
+    let len = text_len(edit);
+    begin_undo(edit);
+    send(edit, SCI_SETTARGETRANGE, 0, len);
+    send(edit, SCI_REPLACETARGET, text.len(), text.as_ptr() as isize);
+    end_undo(edit);
+}
+
+/// The caret (byte position) and the first line shown.
+pub unsafe fn view(edit: HWND) -> (usize, usize) {
+    (
+        send(edit, SCI_GETCURRENTPOS, 0, 0).max(0) as usize,
+        send(edit, SCI_GETFIRSTVISIBLELINE, 0, 0).max(0) as usize,
+    )
+}
+
+/// Puts the caret and scroll position back, clamped to the text.
+pub unsafe fn set_view(edit: HWND, caret: usize, first_line: usize) {
+    let caret = caret.min(text_len(edit).max(0) as usize);
+    send(edit, SCI_GOTOPOS, caret, 0);
+    send(edit, SCI_SETFIRSTVISIBLELINE, first_line, 0);
+}
+
 /// Marks the text as matching the file on disk.
 pub unsafe fn set_saved(edit: HWND) {
     send(edit, SCI_SETSAVEPOINT, 0, 0);

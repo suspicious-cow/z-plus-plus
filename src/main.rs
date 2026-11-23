@@ -18,6 +18,7 @@ mod profile;
 mod results;
 mod sci;
 mod search;
+mod session;
 mod statusbar;
 mod syntax_colors;
 mod tabs;

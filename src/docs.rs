@@ -15,7 +15,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
-use crate::{ask, diff, editor, mdview, menu, prefs, profile, sci, statusbar, tabs, theme, wait};
+use crate::{
+    ask, diff, editor, mdview, menu, prefs, profile, sci, session, statusbar, tabs, theme, wait,
+};
 
 const UNTITLED: &str = "Untitled";
 const MARKDOWN: &str = "Markdown";
@@ -41,6 +43,10 @@ pub struct Doc {
     is_auto_reload: bool,
     /// Shown on the tab in place of "Untitled N" for a tab with no file, such as a comparison.
     caption: Option<String>,
+    /// File in the session's backup folder holding this tab's unsaved text (session.rs).
+    backup: Option<String>,
+    /// The text changed since its backup was written.
+    is_backup_stale: bool,
     /// `zpp --wait` callers (event names) to release when this tab closes.
     waiters: Vec<String>,
     /// Disk checks in a row that found the file missing (see check_disk_inner).
@@ -231,6 +237,8 @@ pub unsafe fn new_tab() -> usize {
             flashed_for: None,
             is_auto_reload: false,
             caption: None,
+            backup: None,
+            is_backup_stale: false,
             waiters: Vec::new(),
             missing_checks: std::cell::Cell::new(0),
             shown_modified: false,
@@ -333,10 +341,12 @@ pub unsafe fn on_edit_change(edit: HWND) {
         return;
     }
     let flipped = app(|a| {
-        a.docs
-            .borrow()
-            .iter()
-            .any(|d| d.edit == edit && d.shown_modified != d.is_modified())
+        let mut docs = a.docs.borrow_mut();
+        let doc = docs.iter_mut().find(|d| d.edit == edit);
+        doc.is_some_and(|d| {
+            d.is_backup_stale = true;
+            d.shown_modified != d.is_modified()
+        })
     });
     statusbar::set_message("");
     fit_margin(edit);
@@ -474,9 +484,12 @@ pub unsafe fn release_all_waiters() {
 
 /// Opens `path` in a tab, or switches to it if it is already open. Reuses an empty Untitled tab.
 pub unsafe fn open_path(path: &Path) -> bool {
-    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = session::tidy_path(path);
     if let Some(index) = find_open(&path) {
         activate(index);
+        if let Some(open) = app(|a| a.docs.borrow()[index].path.clone()) {
+            add_recent(&open);
+        }
         return true;
     }
     let Some((text, format)) = read(&path) else {
@@ -538,13 +551,12 @@ fn read_quietly(path: &Path) -> Result<(Vec<u16>, Format), String> {
 }
 
 fn find_open(path: &Path) -> Option<usize> {
-    let key = path.to_string_lossy().to_lowercase();
+    let key = session::path_key(path);
     app(|a| {
-        a.docs.borrow().iter().position(|d| {
-            d.path
-                .as_ref()
-                .is_some_and(|p| p.to_string_lossy().to_lowercase() == key)
-        })
+        a.docs
+            .borrow()
+            .iter()
+            .position(|d| d.path.as_ref().is_some_and(|p| session::path_key(p) == key))
     })
 }
 
@@ -607,6 +619,9 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         doc.stamp = file::stamp(path);
         doc.is_forced_modified = false;
         doc.is_known_deleted = false;
+        if let Some(backup) = doc.backup.take() {
+            session::delete_backup(&backup);
+        }
     });
     editor::set_saved(edit);
     // A name with no known extension keeps the language the tab already has.
@@ -650,6 +665,9 @@ pub unsafe fn close_tab(index: usize) -> bool {
     }
     DestroyWindow(doc.edit);
     release_waiters(&doc.waiters);
+    if let Some(backup) = &doc.backup {
+        session::delete_backup(backup);
+    }
     if count() == 0 {
         new_tab();
         return true;
@@ -1008,14 +1026,13 @@ pub unsafe fn set_line_endings(is_lf_only: bool) {
 }
 
 pub unsafe fn add_recent(path: &Path) {
-    let key = path.to_string_lossy().to_lowercase();
-    let recent = app(|a| {
-        let mut recent = a.recent.borrow_mut();
-        recent.retain(|p| p.to_string_lossy().to_lowercase() != key);
-        recent.insert(0, path.to_path_buf());
-        recent.truncate(menu::MAX_RECENT);
-        recent.clone()
-    });
+    let key = session::path_key(path);
+    // Start from the saved list: another z++ window may have added files since this one started.
+    let mut recent = prefs::load_recent();
+    recent.retain(|p| session::path_key(p) != key);
+    recent.insert(0, path.to_path_buf());
+    recent.truncate(menu::MAX_RECENT);
+    app(|a| *a.recent.borrow_mut() = recent.clone());
     menu::set_recent(app(|a| a.menus.get().recent), &recent);
     prefs::save_recent(&recent);
 }
@@ -1041,35 +1058,180 @@ pub unsafe fn clear_recent() {
     prefs::save_recent(&[]);
 }
 
-/// Saved files open now, in tab order, and the position of the active one among them.
-pub fn session() -> (Vec<PathBuf>, usize) {
-    app(|a| {
-        let docs = a.docs.borrow();
-        let active = a.active.get();
-        let mut files = Vec::new();
-        let mut active_file = 0;
-        for (i, d) in docs.iter().enumerate() {
-            if let Some(p) = &d.path {
-                if i == active {
-                    active_file = files.len();
-                }
-                files.push(p.clone());
+thread_local! {
+    /// The tab records last written, so an unchanged session is not written again.
+    static LAST_SAVED: std::cell::RefCell<Option<(Vec<String>, usize)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Whether this window keeps the session (the first z++, not a `--new-window` one) and
+/// remembers unsaved edits across restarts.
+pub fn is_remembering() -> bool {
+    app(|a| a.is_session_owner.get() && a.is_remember_unsaved.get())
+}
+
+/// Saves the open tabs, and the text of tabs with unsaved edits, if anything changed. Called
+/// every couple of seconds and right after a tab closes.
+pub unsafe fn save_session_now() {
+    if !app(|a| a.is_session_owner.get()) {
+        return;
+    }
+    let remember = is_remembering();
+    let mut tabs = Vec::new();
+    let mut active_tab = 0;
+    for index in 0..count() {
+        if let Some(tab) = session_tab(index, remember) {
+            if index == active_index() {
+                active_tab = tabs.len();
+            }
+            tabs.push(tab);
+        }
+    }
+    let records: Vec<String> = tabs.iter().map(session::encode).collect();
+    let is_same = LAST_SAVED.with(|l| l.borrow().as_ref() == Some(&(records.clone(), active_tab)));
+    if !is_same {
+        prefs::save_tabs(&records, active_tab);
+        LAST_SAVED.with(|l| *l.borrow_mut() = Some((records, active_tab)));
+    }
+}
+
+/// Tab `index` as a session record, writing its backup first if its unsaved text changed.
+/// None for a tab with nothing to remember (an empty Untitled tab, a comparison).
+unsafe fn session_tab(index: usize, remember: bool) -> Option<session::Tab> {
+    let (path, edit, backup, is_stale, caption, is_rendered) = app(|a| {
+        let d = &a.docs.borrow()[index];
+        (
+            d.path.clone(),
+            d.edit,
+            d.backup.clone(),
+            d.is_backup_stale,
+            d.caption.is_some(),
+            d.is_rendered,
+        )
+    });
+    if caption {
+        return None;
+    }
+    let keep_text = remember && is_modified(index);
+    let backup = if keep_text {
+        let name = backup.unwrap_or_else(session::new_backup_name);
+        if is_stale || !session::backup_dir().join(&name).exists() {
+            let text = String::from_utf16_lossy(&editor::text(edit));
+            if let Err(e) = session::write_backup(&name, &text) {
+                statusbar::set_message(&format!("Could not keep unsaved edits: {e}"));
             }
         }
-        (files, active_file)
+        Some(name)
+    } else {
+        if let Some(old) = backup {
+            session::delete_backup(&old);
+        }
+        None
+    };
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        docs[index].backup = backup.clone();
+        docs[index].is_backup_stale = false;
+    });
+    if path.is_none() && backup.is_none() {
+        return None;
+    }
+    let (caret, first_line) = editor::view(edit);
+    Some(session::Tab {
+        path,
+        backup,
+        caret,
+        first_line,
+        is_rendered,
     })
 }
 
-/// Reopens last time's files that still exist, and shows the one that was active.
-pub unsafe fn restore_session(files: &[PathBuf], active: usize) {
-    let mut opened = Vec::new();
-    for (i, path) in files.iter().enumerate() {
-        if path.is_file() && open_path(path) {
-            opened.push((i, active_index()));
+/// Before exit: every tab's unsaved text goes to its backup file and the session is saved, so
+/// nothing needs asking.
+pub unsafe fn keep_unsaved_for_next_time() {
+    app(|a| {
+        for d in a.docs.borrow_mut().iter_mut() {
+            d.is_backup_stale = true;
+        }
+    });
+    save_session_now();
+}
+
+/// Reopens last time's tabs with their unsaved edits, caret, and scroll position, and shows
+/// the one that was active. Files that are gone and had no unsaved edits are skipped.
+pub unsafe fn restore_session(tabs: &[session::Tab], active: usize) {
+    let mut kept = Vec::new();
+    let mut shown = None;
+    let mut missing = 0;
+    for (i, tab) in tabs.iter().enumerate() {
+        let Some(index) = restore_tab(tab) else {
+            missing += 1;
+            continue;
+        };
+        kept.extend(app(|a| a.docs.borrow()[index].backup.clone()));
+        if i == active {
+            shown = Some(index);
         }
     }
-    if let Some(&(_, tab)) = opened.iter().find(|(i, _)| *i == active) {
-        activate(tab);
+    session::delete_unused_backups(&kept);
+    if let Some(index) = shown {
+        activate(index);
+    }
+    if missing > 0 {
+        let noun = if missing == 1 { "file" } else { "files" };
+        statusbar::set_message(&format!(
+            "{missing} {noun} from last time could not be found and were not reopened"
+        ));
+        update_status();
+    }
+    save_session_now();
+}
+
+unsafe fn restore_tab(tab: &session::Tab) -> Option<usize> {
+    let kept_text = tab.backup.as_deref().and_then(session::read_backup);
+    let index = match (&tab.path, &kept_text) {
+        (Some(path), _) if path.is_file() => {
+            if !open_path(path) {
+                return None;
+            }
+            active_index()
+        }
+        (Some(path), Some(_)) => {
+            // The file is gone, but the unsaved edits were kept: show them, unsaved.
+            let index = reuse_or_new_tab();
+            app(|a| {
+                let mut docs = a.docs.borrow_mut();
+                docs[index].path = Some(path.clone());
+                docs[index].is_known_deleted = true;
+            });
+            force_modified(index);
+            set_language(index, languages::for_path(path));
+            index
+        }
+        (None, Some(_)) => reuse_or_new_tab(),
+        _ => return None,
+    };
+    let edit = edit_of(index);
+    if let Some(text) = &kept_text {
+        editor::replace_all_unsaved(edit, text);
+        app(|a| a.docs.borrow_mut()[index].backup = tab.backup.clone());
+        fit_margin(edit);
+    }
+    activate(index);
+    if tab.is_rendered && is_active_markdown() && !is_rendered(index) {
+        toggle_rendered();
+    }
+    editor::set_view(edit, tab.caret, tab.first_line);
+    refresh();
+    Some(index)
+}
+
+/// The active tab if it is an empty, untouched Untitled one, else a new tab.
+unsafe fn reuse_or_new_tab() -> usize {
+    if is_pristine(active_index()) {
+        active_index()
+    } else {
+        new_tab()
     }
 }
 

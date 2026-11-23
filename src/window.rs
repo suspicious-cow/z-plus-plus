@@ -45,6 +45,10 @@ const WM_APP_OPEN_PENDING: u32 = WM_APP + 5;
 /// build) show up while z++ is in the background.
 const DISK_TIMER_ID: usize = 1;
 const DISK_POLL_MS: u32 = 1000;
+/// Saves the open tabs and unsaved edits this often when they changed, so a crash or a forced
+/// restart loses at most this much.
+const SESSION_TIMER_ID: usize = 2;
+const SESSION_SAVE_MS: u32 = 2000;
 const MAX_PATH_UNITS: usize = 32 * 1024;
 
 pub struct App {
@@ -75,6 +79,9 @@ pub struct App {
     is_toolbar: Cell<bool>,
     is_status_bar: Cell<bool>,
     pub is_line_numbers: Cell<bool>,
+    /// This window keeps the session: the first z++, not one opened with --new-window.
+    pub is_session_owner: Cell<bool>,
+    pub is_remember_unsaved: Cell<bool>,
     font_list: RefCell<Vec<String>>,
     custom_colors: RefCell<[u32; 16]>,
     paint: RefCell<Option<theme::Paint>>,
@@ -107,6 +114,8 @@ thread_local! {
         is_toolbar: Cell::new(true),
         is_status_bar: Cell::new(true),
         is_line_numbers: Cell::new(true),
+        is_session_owner: Cell::new(false),
+        is_remember_unsaved: Cell::new(true),
         font_list: RefCell::new(Vec::new()),
         custom_colors: RefCell::new([0x00FF_FFFF; 16]),
         paint: RefCell::new(None),
@@ -169,11 +178,16 @@ pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool, is_wait: bool) -> i3
     let recent = session.recent.clone();
     app(|a| *a.recent.borrow_mut() = recent.clone());
     menu::set_recent(menus.recent, &recent);
-    docs::restore_session(&session.files, session.active);
+    // A --new-window z++ neither restores nor saves the session, so it can't overwrite it.
+    app(|a| a.is_session_owner.set(!is_new_window));
+    if !is_new_window {
+        docs::restore_session(&session.tabs, session.active);
+    }
     for path in &paths {
         docs::open_location(path);
     }
     SetTimer(hwnd, DISK_TIMER_ID, DISK_POLL_MS, None);
+    SetTimer(hwnd, SESSION_TIMER_ID, SESSION_SAVE_MS, None);
     message_loop(hwnd)
 }
 
@@ -305,6 +319,7 @@ unsafe fn load_prefs(windows_fonts: &[&str]) {
         a.is_toolbar.set(p.is_toolbar);
         a.is_status_bar.set(p.is_status_bar);
         a.is_line_numbers.set(p.is_line_numbers);
+        a.is_remember_unsaved.set(p.is_remember_unsaved);
         *a.font_list.borrow_mut() = font_list;
     });
 }
@@ -321,20 +336,21 @@ unsafe fn save_prefs() {
         is_toolbar: a.is_toolbar.get(),
         is_status_bar: a.is_status_bar.get(),
         is_line_numbers: a.is_line_numbers.get(),
+        is_remember_unsaved: a.is_remember_unsaved.get(),
     });
     prefs::save(&p);
 }
 
-/// Open files and window position, saved while the window still exists.
+/// The open tabs and the window position, saved while the window still exists.
 unsafe fn save_session(hwnd: HWND) {
-    let (files, active) = docs::session();
+    docs::save_session_now();
     let mut wp: WINDOWPLACEMENT = zeroed();
     wp.length = size_of::<WINDOWPLACEMENT>() as u32;
     let has_place = GetWindowPlacement(hwnd, &mut wp) != 0;
     prefs::save_session(&prefs::Session {
-        files,
-        active,
-        recent: app(|a| a.recent.borrow().clone()),
+        tabs: Vec::new(),
+        active: 0,
+        recent: Vec::new(),
         window: has_place.then_some(wp.rcNormalPosition),
         is_maximized: wp.showCmd == SW_SHOWMAXIMIZED as u32
             || (wp.showCmd == SW_SHOWMINIMIZED as u32 && wp.flags & WPF_RESTORETOMAXIMIZED != 0),
@@ -433,13 +449,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_CLOSE => {
-            if docs::confirm_exit() {
+            if confirm_exit() {
                 save_session(hwnd);
                 DestroyWindow(hwnd);
             }
             0
         }
-        WM_QUERYENDSESSION => docs::confirm_exit() as LRESULT,
+        WM_QUERYENDSESSION => confirm_exit() as LRESULT,
         // Logoff or shutdown ends the process without WM_DESTROY.
         WM_ENDSESSION if wparam != 0 => {
             docs::release_all_waiters();
@@ -449,6 +465,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_TIMER if wparam == DISK_TIMER_ID => {
             docs::check_disk(docs::active_index());
+            0
+        }
+        WM_TIMER if wparam == SESSION_TIMER_ID => {
+            docs::save_session_now();
             0
         }
         WM_DESTROY => {
@@ -646,6 +666,7 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_TOOLBAR => toggle_bar(true),
         IDM_STATUS_BAR => toggle_bar(false),
         IDM_LINE_NUMBERS => toggle_line_numbers(),
+        IDM_REMEMBER_UNSAVED => toggle_remember_unsaved(),
         IDM_FONT_DIALOG => font_dialog(),
         IDM_FONT_BIGGER => set_size(app(|a| a.size.get()) + fonts::SIZE_STEP_TENTHS),
         IDM_FONT_SMALLER => set_size(app(|a| a.size.get()).saturating_sub(fonts::SIZE_STEP_TENTHS)),
@@ -869,6 +890,23 @@ unsafe fn end_preview() {
     }
 }
 
+/// Before closing: with Remember Unsaved Changes on, unsaved edits go to backup files for next
+/// time and nothing is asked; otherwise each unsaved tab asks Save / Don't Save / Cancel.
+unsafe fn confirm_exit() -> bool {
+    if docs::is_remembering() {
+        docs::keep_unsaved_for_next_time();
+        return true;
+    }
+    docs::confirm_exit()
+}
+
+unsafe fn toggle_remember_unsaved() {
+    app(|a| a.is_remember_unsaved.set(!a.is_remember_unsaved.get()));
+    save_prefs();
+    docs::save_session_now();
+    sync_menu_checks();
+}
+
 pub unsafe fn sync_menu_checks() {
     let format = docs::active_format();
     let language = app(|a| a.docs.borrow().get(a.active.get()).and_then(|d| d.language));
@@ -889,6 +927,7 @@ pub unsafe fn sync_menu_checks() {
                 is_toolbar: a.is_toolbar.get(),
                 is_status_bar: a.is_status_bar.get(),
                 is_line_numbers: a.is_line_numbers.get(),
+                is_remember_unsaved: a.is_remember_unsaved.get(),
                 is_results: is_results_shown,
                 is_rendered,
                 is_markdown,

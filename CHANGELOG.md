@@ -22,7 +22,9 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 - A status bar with line and column, selection size, zoom, line endings and encoding; clicking the last two changes them.
 - Format > Encoding and Format > Line Endings convert the file on its next save.
 - File > Recent Files, Save All, opening several files at once, and dragging files onto the window.
-- z++ reopens last time's files and window position.
+- z++ reopens last time's tabs in order, with the active tab, caret, scroll position, and rendered view, and the window position. The tab list is saved every couple of seconds while it changes, so a crash or forced restart no longer loses it. A tab you close drops out; a file deleted since is skipped with a note in the status bar.
+- Unsaved edits survive closing z++, like Notepad++: they are kept in backup files under `%LOCALAPPDATA%\z++\backup` and come back unsaved next time (Undo returns to the file's text). File > Remember Unsaved Changes turns this off and brings back the Save prompt on exit.
+- File > Recent Files keeps 20 files, newest first. Reopening a file moves it to the top, and other spellings of the same path (forward slashes, short names, case) count as one file. A second window no longer overwrites the list or the session.
 - If z++ ever crashes, it says why and saves the report to `%TEMP%\zpp-crash.txt`.
 
 ### Changed

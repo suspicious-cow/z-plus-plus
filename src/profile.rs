@@ -10,7 +10,7 @@ const BASE_KEY: &str = "Software\\z++";
 const BASE_CLASS: &str = "ZppMainWindow";
 const MAX_NAME: usize = 40;
 
-fn name() -> Option<&'static str> {
+pub fn name() -> Option<&'static str> {
     static NAME: OnceLock<Option<String>> = OnceLock::new();
     NAME.get_or_init(|| std::env::var(ENV_VAR).ok().filter(|n| is_valid(n)))
         .as_deref()
