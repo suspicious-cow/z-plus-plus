@@ -9,13 +9,13 @@ use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Controls::Dialogs::*;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{IsWindowEnabled, SetFocus};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
-use crate::{editor, mdview, menu, notice, prefs, statusbar, tabs, theme, wait};
+use crate::{ask, diff, editor, mdview, menu, prefs, profile, sci, statusbar, tabs, theme, wait};
 
 const UNTITLED: &str = "Untitled";
 const MARKDOWN: &str = "Markdown";
@@ -33,12 +33,18 @@ pub struct Doc {
     pub look_gen: u32,
     /// Index into languages::LANGUAGES, or None for plain text.
     pub language: Option<usize>,
-    /// News about the file on disk, shown in the notice bar while this tab is active.
-    disk_notice: Option<DiskNotice>,
+    /// The user was told the file is gone and kept the tab open.
+    is_known_deleted: bool,
+    /// The disk state the taskbar button last flashed for, so one change flashes once.
+    flashed_for: Option<Option<Stamp>>,
+    /// The user asked to reload this file without asking while the tab has no unsaved edits.
+    is_auto_reload: bool,
+    /// Shown on the tab in place of "Untitled N" for a tab with no file, such as a comparison.
+    caption: Option<String>,
     /// `zpp --wait` callers (event names) to release when this tab closes.
     waiters: Vec<String>,
-    /// The file was missing at the last disk check (see check_disk_inner).
-    is_missing: std::cell::Cell<bool>,
+    /// Disk checks in a row that found the file missing (see check_disk_inner).
+    missing_checks: std::cell::Cell<u32>,
     shown_modified: bool,
     /// Unsaved even though the text matches the file: it was deleted on disk, or the encoding
     /// changed. Scintilla's own modified state only follows edits to the text.
@@ -196,7 +202,10 @@ fn label(doc: &Doc) -> String {
             || p.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         ),
-        None => format!("{UNTITLED} {}", doc.untitled),
+        None => doc
+            .caption
+            .clone()
+            .unwrap_or_else(|| format!("{UNTITLED} {}", doc.untitled)),
     }
 }
 
@@ -218,9 +227,12 @@ pub unsafe fn new_tab() -> usize {
             stamp: None,
             look_gen: 0,
             language: None,
-            disk_notice: None,
+            is_known_deleted: false,
+            flashed_for: None,
+            is_auto_reload: false,
+            caption: None,
             waiters: Vec::new(),
-            is_missing: std::cell::Cell::new(false),
+            missing_checks: std::cell::Cell::new(0),
             shown_modified: false,
             is_forced_modified: false,
             is_rendered: false,
@@ -297,7 +309,6 @@ pub unsafe fn refresh() {
         (list, a.active.get())
     });
     tabs::set(list, active);
-    show_notice();
     update_title();
     update_status();
     window::sync_menu_checks();
@@ -595,7 +606,7 @@ unsafe fn save_to(index: usize, path: &Path) -> bool {
         doc.path = Some(path.to_path_buf());
         doc.stamp = file::stamp(path);
         doc.is_forced_modified = false;
-        doc.disk_notice = None;
+        doc.is_known_deleted = false;
     });
     editor::set_saved(edit);
     // A name with no known extension keeps the language the tab already has.
@@ -657,8 +668,9 @@ pub unsafe fn confirm_exit() -> bool {
     (0..count()).all(|i| confirm_discard(i))
 }
 
-/// Called when z++ comes to the front and when a tab is shown: notices files changed or
-/// deleted by another program. Unchanged tabs reload quietly; tabs with edits get a notice.
+/// Called every second, when z++ comes to the front, and when a tab is shown: notices files
+/// changed or deleted by another program and asks what to do in a modal dialog. While z++ is in
+/// the background it only flashes its taskbar button; the dialog comes up when the user returns.
 pub unsafe fn check_disk(index: usize) {
     if app(|a| a.is_checking_disk.replace(true)) {
         return;
@@ -677,46 +689,264 @@ unsafe fn check_disk_inner(index: usize) {
     };
     let now = file::stamp(&path);
     if now == old {
-        app(|a| a.docs.borrow()[index].is_missing.set(false));
+        app(|a| a.docs.borrow()[index].missing_checks.set(0));
         return;
     }
-    if now.is_none() && !app(|a| a.docs.borrow()[index].is_missing.replace(true)) {
-        // Tools that save by deleting and renaming leave the file missing for a moment:
-        // only call it deleted if it is still gone at the next check.
-        return;
-    }
-    let was_deleted = app(|a| {
-        let mut docs = a.docs.borrow_mut();
-        let d = &mut docs[index];
-        d.stamp = now;
-        d.is_missing.set(now.is_none());
-        // Back after a deletion: only real edits count as unsaved now.
-        let was_deleted = d.disk_notice == Some(DiskNotice::Deleted) && now.is_some();
-        if was_deleted {
-            d.is_forced_modified = false;
-            d.disk_notice = None;
+    if now.is_none() {
+        // Tools that save by deleting and renaming leave the file missing for a moment, and a
+        // slow one for longer: only call it deleted once it stays gone for a few checks.
+        let checks = app(|a| {
+            let d = &a.docs.borrow()[index];
+            d.missing_checks.set(d.missing_checks.get() + 1);
+            d.missing_checks.get()
+        });
+        if checks < MISSING_CHECKS {
+            return;
         }
-        was_deleted
-    });
-    if was_deleted {
+    }
+    if now.is_some() && app(|a| a.docs.borrow()[index].is_known_deleted) {
+        // Back after a deletion the user already answered: only real edits count as unsaved.
+        app(|a| {
+            let mut docs = a.docs.borrow_mut();
+            docs[index].is_known_deleted = false;
+            docs[index].is_forced_modified = false;
+        });
         refresh();
     }
-    // Ask through the notice bar, never a dialog: an agent may be editing the file right now.
-    let notice = if now.is_none() {
-        force_modified(index);
-        Some(DiskNotice::Deleted)
-    } else if is_modified(index) {
-        Some(DiskNotice::Changed)
-    } else {
-        None
-    };
-    if notice.is_some() {
-        app(|a| a.docs.borrow_mut()[index].disk_notice = notice);
-        refresh();
+    let is_quiet =
+        now.is_some() && !is_modified(index) && app(|a| a.docs.borrow()[index].is_auto_reload);
+    if is_quiet {
+        set_stamp(index, now);
+        reload(index, &path);
         return;
     }
-    // A file that can't be read now is retried when it changes again, not every second.
-    reload(index, &path);
+    if !can_ask() {
+        flash_once(index, now);
+        return;
+    }
+    // Recorded before asking, so this change is asked about once, whatever the answer.
+    set_stamp(index, now);
+    if now.is_none() {
+        ask_deleted(index, &path);
+    } else {
+        ask_changed(index, &path);
+    }
+}
+
+unsafe fn set_stamp(index: usize, stamp: Option<Stamp>) {
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        docs[index].stamp = stamp;
+        docs[index].flashed_for = None;
+        docs[index].missing_checks.set(0);
+    });
+}
+
+/// z++ is the window the user is using, with no other dialog of its own open.
+unsafe fn can_ask() -> bool {
+    let main = app(|a| a.main.get());
+    if profile::is_test() {
+        return IsIconic(main) == 0 && IsWindowEnabled(main) != 0;
+    }
+    let front = GetForegroundWindow();
+    let is_ours = front == main || GetWindow(front, GW_OWNER) == main;
+    is_ours && IsWindowEnabled(main) != 0
+}
+
+unsafe fn flash_once(index: usize, now: Option<Stamp>) {
+    if app(|a| a.docs.borrow_mut()[index].flashed_for.replace(now)) == Some(now) {
+        return;
+    }
+    let info = FLASHWINFO {
+        cbSize: size_of::<FLASHWINFO>() as u32,
+        hwnd: app(|a| a.main.get()),
+        dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
+        uCount: 0,
+        dwTimeout: 0,
+    };
+    FlashWindowEx(&info);
+}
+
+const RELOAD: i32 = 100;
+const KEEP: i32 = 101;
+const COMPARE: i32 = 102;
+const SAVE_AGAIN: i32 = 103;
+const CLOSE: i32 = 104;
+const COMPARE_CONTEXT: usize = 3;
+/// Disk checks (about a second apart) a file must be missing before z++ calls it deleted.
+const MISSING_CHECKS: u32 = 3;
+
+unsafe fn ask_changed(index: usize, path: &Path) {
+    let name = app(|a| label(&a.docs.borrow()[index]));
+    let shown = path.display().to_string();
+    activate(index);
+    loop {
+        let has_edits = is_modified(index);
+        let heading = format!("{name} changed on disk");
+        let detail = if has_edits {
+            "Another program changed this file, and you have unsaved edits in this tab."
+        } else {
+            "Another program changed this file. You have no unsaved edits in this tab."
+        };
+        let reload_note = if has_edits {
+            "Replaces this tab with the file on disk. Your edits are replaced (Undo still has them)."
+        } else {
+            "Shows the new version. The changed lines are marked, and Undo goes back."
+        };
+        let choices = [
+            ask::Choice { id: RELOAD, label: "Reload from disk", note: reload_note },
+            ask::Choice {
+                id: KEEP,
+                label: "Keep my version",
+                note: "The tab stays as it is and counts as unsaved. Saving writes it over the file on disk.",
+            },
+            ask::Choice {
+                id: COMPARE,
+                label: "Compare",
+                note: "Shows the differences in a new tab, then asks again.",
+            },
+        ];
+        let question = ask::Question {
+            heading: &heading,
+            detail,
+            path: &shown,
+            choices: &choices,
+            default: if has_edits { KEEP } else { RELOAD },
+            check: (!has_edits)
+                .then_some("Reload this file without asking while it has no unsaved edits"),
+        };
+        let (chosen, is_checked) = ask::ask(app(|a| a.main.get()), &question);
+        // The comparison tab may be showing; the answer is about this one.
+        if chosen != COMPARE {
+            activate(index);
+        }
+        match chosen {
+            RELOAD if has_edits && !confirm_lose_edits(&name, &shown) => continue,
+            RELOAD => {
+                app(|a| a.docs.borrow_mut()[index].is_auto_reload |= is_checked);
+                reload(index, path);
+            }
+            COMPARE => {
+                open_comparison(index, path);
+                continue;
+            }
+            _ => keep_mine(index),
+        }
+        return;
+    }
+}
+
+unsafe fn confirm_lose_edits(name: &str, shown: &str) -> bool {
+    let heading = format!("Replace your edits to {name}?");
+    let choices = [
+        ask::Choice {
+            id: RELOAD,
+            label: "Reload and replace my edits",
+            note: "Undo can still bring them back until you close the tab.",
+        },
+        ask::Choice {
+            id: KEEP,
+            label: "Go back",
+            note: "",
+        },
+    ];
+    let question = ask::Question {
+        heading: &heading,
+        detail: "The tab will show the file on disk instead of your unsaved edits.",
+        path: shown,
+        choices: &choices,
+        default: KEEP,
+        check: None,
+    };
+    ask::ask(app(|a| a.main.get()), &question).0 == RELOAD
+}
+
+/// The tab keeps its text and counts as unsaved, so the user sees it differs from the disk.
+unsafe fn keep_mine(index: usize) {
+    force_modified(index);
+    refresh();
+}
+
+unsafe fn ask_deleted(index: usize, path: &Path) {
+    let name = app(|a| label(&a.docs.borrow()[index]));
+    let shown = path.display().to_string();
+    let heading = format!("{name} was deleted or moved");
+    let choices = [
+        ask::Choice {
+            id: KEEP,
+            label: "Keep it open",
+            note: "The tab stays open and counts as unsaved.",
+        },
+        ask::Choice {
+            id: SAVE_AGAIN,
+            label: "Save it again",
+            note: "Writes this tab back to the same place.",
+        },
+        ask::Choice {
+            id: CLOSE,
+            label: "Close the tab",
+            note: "",
+        },
+    ];
+    let question = ask::Question {
+        heading: &heading,
+        detail: "The file is no longer on disk. Its text is still open in this tab.",
+        path: &shown,
+        choices: &choices,
+        default: KEEP,
+        check: None,
+    };
+    activate(index);
+    app(|a| a.docs.borrow_mut()[index].is_known_deleted = true);
+    force_modified(index);
+    refresh();
+    let (chosen, _) = ask::ask(app(|a| a.main.get()), &question);
+    match chosen {
+        SAVE_AGAIN => {
+            save(index);
+        }
+        CLOSE => {
+            // Asks about real edits only: the deletion itself is what the user is answering.
+            if !editor::is_modified(edit_of(index)) {
+                app(|a| a.docs.borrow_mut()[index].is_forced_modified = false);
+            }
+            close_tab(index);
+        }
+        _ => {}
+    }
+}
+/// A read-only tab with a unified diff from this tab's text to the file on disk.
+unsafe fn open_comparison(index: usize, path: &Path) {
+    let name = app(|a| label(&a.docs.borrow()[index]));
+    let mine = lf_text(&editor::text(edit_of(index)));
+    let disk = match read_quietly(path) {
+        Ok((text, _)) => lf_text(&text),
+        Err(why) => {
+            error_box(&why);
+            return;
+        }
+    };
+    let mut text = diff::unified(
+        &mine,
+        &disk,
+        &format!("{name} (this tab)"),
+        &format!("{name} (on disk)"),
+        COMPARE_CONTEXT,
+    );
+    if text.is_empty() {
+        text = format!("{name}: this tab and the file on disk have the same text.\n");
+    }
+    let tab = new_tab();
+    let edit = edit_of(tab);
+    let units: Vec<u16> = text.encode_utf16().collect();
+    editor::set_text(edit, &units, true);
+    SendMessageW(edit, sci::SCI_SETREADONLY, 1, 0);
+    app(|a| a.docs.borrow_mut()[tab].caption = Some(format!("Compare: {name}")));
+    set_language(tab, languages::for_path(Path::new("compare.diff")));
+}
+
+fn lf_text(units: &[u16]) -> String {
+    String::from_utf16_lossy(units).replace("\r\n", "\n")
 }
 
 /// Replaces the tab's text with the file's. False, with the reason in the status bar, if the
@@ -738,7 +968,6 @@ unsafe fn reload(index: usize, path: &Path) -> bool {
         let mut docs = a.docs.borrow_mut();
         docs[index].format = format;
         docs[index].is_forced_modified = false;
-        docs[index].disk_notice = None;
     });
     refresh();
     if hunks > 0 {
@@ -748,63 +977,6 @@ unsafe fn reload(index: usize, path: &Path) -> bool {
         ));
     }
     true
-}
-
-/// What the notice bar says about a tab's file.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DiskNotice {
-    /// Changed by another program while the tab had unsaved edits.
-    Changed,
-    Deleted,
-}
-
-const CHANGED_BUTTONS: [&str; 2] = ["Reload", "Keep mine"];
-const DELETED_BUTTONS: [&str; 2] = ["Save", "Dismiss"];
-
-/// Shows the active tab's notice, or hides the bar.
-unsafe fn show_notice() {
-    let active = active_index();
-    let notice = app(|a| {
-        let docs = a.docs.borrow();
-        let d = docs.get(active)?;
-        let name = label(d);
-        Some(match d.disk_notice? {
-            DiskNotice::Changed => notice::Notice {
-                text: format!("{name} changed on disk, and you have unsaved edits here."),
-                buttons: CHANGED_BUTTONS.to_vec(),
-            },
-            DiskNotice::Deleted => notice::Notice {
-                text: format!("{name} was deleted or moved on disk. It is still open here."),
-                buttons: DELETED_BUTTONS.to_vec(),
-            },
-        })
-    });
-    if notice::set(notice) {
-        window::layout();
-    }
-}
-
-/// A click on the notice bar's button `button`, for the active tab.
-pub unsafe fn on_notice_button(button: usize) {
-    let index = active_index();
-    let Some((kind, path)) = app(|a| {
-        let docs = a.docs.borrow();
-        let d = docs.get(index)?;
-        Some((d.disk_notice?, d.path.clone()?))
-    }) else {
-        return;
-    };
-    let clear = || app(|a| a.docs.borrow_mut()[index].disk_notice = None);
-    match (kind, button) {
-        (DiskNotice::Changed, 0) => {
-            reload(index, &path);
-        }
-        (DiskNotice::Deleted, 0) => {
-            save(index);
-        }
-        _ => clear(),
-    }
-    refresh();
 }
 
 /// Format > Encoding: the text stays the same; the next save writes the new encoding.

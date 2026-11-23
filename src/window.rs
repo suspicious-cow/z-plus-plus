@@ -6,7 +6,6 @@ use std::ffi::c_void;
 use std::mem::{size_of, zeroed};
 use std::path::PathBuf;
 use std::ptr::{null, null_mut};
-use windows_sys::w;
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::{
     GetDC, GetDeviceCaps, MonitorFromRect, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, LOGPIXELSY,
@@ -26,16 +25,17 @@ use crate::menu::*;
 use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors, Syntax};
 use crate::{
-    dialog, editor, find, findfiles, fonts, menu, notice, prefs, results, statusbar, tabs, theme,
+    dialog, editor, find, findfiles, fonts, menu, prefs, profile, results, statusbar, tabs, theme,
     toolbar, wait, wide,
 };
 
-const APP_NAME: &str = "z++";
-const CLASS_NAME: *const u16 = w!("ZppMainWindow");
+pub const APP_NAME: &str = "z++";
 /// Resource ID of the icon in build.rs's .rc file.
 const APP_ICON_ID: usize = 1;
 const DEFAULT_WIDTH: i32 = 1100;
 const DEFAULT_HEIGHT: i32 = 750;
+/// Where a ZPP_TEST window opens: on no monitor, so it never shows on the user's screen.
+const TEST_OFFSCREEN: i32 = -20000;
 const LICENSES_FILE: &str = "z++ font licenses.txt";
 const TENTHS_PER_INCH: u32 = 720;
 /// WM_COPYDATA tag for "open these files", sent by a second z++ to the first one.
@@ -54,7 +54,6 @@ pub struct App {
     pub toolbar: Cell<HWND>,
     pub tab_strip: Cell<HWND>,
     pub status: Cell<HWND>,
-    pub notice: Cell<HWND>,
     pub menus: Cell<Menus>,
     pub docs: RefCell<Vec<Doc>>,
     pub active: Cell<usize>,
@@ -90,7 +89,6 @@ thread_local! {
         toolbar: Cell::new(null_mut()),
         tab_strip: Cell::new(null_mut()),
         status: Cell::new(null_mut()),
-        notice: Cell::new(null_mut()),
         menus: Cell::new(Menus { bar: null_mut(), recent: null_mut(), encoding: null_mut(), line_endings: null_mut() }),
         docs: RefCell::new(Vec::new()),
         active: Cell::new(0),
@@ -150,7 +148,7 @@ fn theme_or(name: &str, fallback: &str) -> usize {
 /// With `is_wait`, hands them over and returns once their tabs are closed.
 pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool, is_wait: bool) -> i32 {
     if is_wait {
-        return wait::run(&paths, CLASS_NAME);
+        return wait::run(&paths, profile::class_name());
     }
     if !is_new_window && hand_off(&paths) {
         return 0;
@@ -188,14 +186,14 @@ unsafe fn create_main_window(hinst: HINSTANCE, bar: HMENU) -> Option<HWND> {
         hIcon: load_icon(hinst, SM_CXICON, SM_CYICON),
         hIconSm: load_icon(hinst, SM_CXSMICON, SM_CYSMICON),
         hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-        lpszClassName: CLASS_NAME,
+        lpszClassName: profile::class_name(),
         ..zeroed()
     };
     RegisterClassExW(&wc);
     let title = wide(APP_NAME);
     let hwnd = CreateWindowExW(
         WS_EX_ACCEPTFILES,
-        CLASS_NAME,
+        profile::class_name(),
         title.as_ptr(),
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT,
@@ -212,7 +210,7 @@ unsafe fn create_main_window(hinst: HINSTANCE, bar: HMENU) -> Option<HWND> {
 
 /// Sends the files to a running z++ and brings it to the front. False if none is running.
 unsafe fn hand_off(paths: &[PathBuf]) -> bool {
-    let existing = FindWindowW(CLASS_NAME, null());
+    let existing = FindWindowW(profile::class_name(), null());
     if existing.is_null() {
         return false;
     }
@@ -249,6 +247,21 @@ unsafe fn load_icon(hinst: HINSTANCE, cx: SYSTEM_METRICS_INDEX, cy: SYSTEM_METRI
 
 /// Last time's size and position, if that spot is still on a monitor.
 unsafe fn show_at_saved_place(hwnd: HWND, session: &prefs::Session) {
+    if profile::is_test() {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW as isize);
+        let flags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW;
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            TEST_OFFSCREEN,
+            TEST_OFFSCREEN,
+            DEFAULT_WIDTH,
+            DEFAULT_HEIGHT,
+            flags,
+        );
+        return;
+    }
     let saved = session.window.filter(|rc| {
         rc.right > rc.left
             && rc.bottom > rc.top
@@ -391,10 +404,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             findfiles::on_done(wparam, lparam);
             0
         }
-        notice::WM_APP_NOTICE => {
-            docs::on_notice_button(wparam);
-            0
-        }
         statusbar::WM_APP_STATUS_CLICK => {
             show_status_menu(hwnd, wparam);
             0
@@ -513,14 +522,12 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
     let bar = toolbar::create(hwnd, hinst);
     let strip = tabs::create(hwnd, hinst);
     let status = statusbar::create(hwnd, hinst);
-    let notice = notice::create(hwnd, hinst);
     results::create(hwnd, hinst);
     let (is_toolbar, is_status_bar) = app(|a| {
         a.main.set(hwnd);
         a.toolbar.set(bar);
         a.tab_strip.set(strip);
         a.status.set(status);
-        a.notice.set(notice);
         (a.is_toolbar.get(), a.is_status_bar.get())
     });
     if !is_toolbar {
@@ -537,14 +544,13 @@ unsafe fn on_create(hwnd: HWND) -> LRESULT {
 
 /// Toolbar, tabs, the active editor, then the status bar, top to bottom.
 pub unsafe fn layout() {
-    let (main, edit, bar, strip, status, notice, is_toolbar, is_status_bar) = app(|a| {
+    let (main, edit, bar, strip, status, is_toolbar, is_status_bar) = app(|a| {
         (
             a.main.get(),
             a.edit.get(),
             a.toolbar.get(),
             a.tab_strip.get(),
             a.status.get(),
-            a.notice.get(),
             a.is_toolbar.get(),
             a.is_status_bar.get(),
         )
@@ -563,9 +569,7 @@ pub unsafe fn layout() {
     };
     MoveWindow(bar, 0, 0, rc.right, bar_h, 1);
     MoveWindow(strip, 0, bar_h, rc.right, tabs_h, 1);
-    let notice_h = notice::height();
-    MoveWindow(notice, 0, bar_h + tabs_h, rc.right, notice_h, 1);
-    let top = bar_h + tabs_h + notice_h;
+    let top = bar_h + tabs_h;
     let results_h = results::height();
     let edit_h = (rc.bottom - top - status_h - results_h).max(0);
     if !edit.is_null() {
@@ -838,7 +842,6 @@ unsafe fn paint_look() {
     toolbar::set_colors(colors);
     tabs::set_colors(colors);
     statusbar::set_colors(colors);
-    notice::set_colors(colors);
 }
 
 /// Hovering a theme in View > Theme previews it; hovering anything else restores the theme.

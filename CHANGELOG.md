@@ -10,8 +10,9 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 - Find in Files (Ctrl+Shift+F) with a file filter, match case, whole word and regular expressions. It searches on a background thread, skips build and dependency folders and binary files, and lists hits in a panel under the text; double-click a hit to open it. View > Search Results hides the panel.
 - `zpp file:42` and `zpp file:42:7` open a file at a line and column, the form compilers and coding agents print.
 - `zpp --wait` returns only once the file's tab is closed, so z++ can be the editor for git and other tools.
-- Files changed by another program now reload without waiting for you to switch back to z++. Only the lines that differ are replaced, so the caret and scroll position stay put and Undo goes back. A margin marks changed lines.
-- When a tab with unsaved edits changes on disk, a bar above the text offers Reload or Keep mine instead of a dialog. A file deleted on disk gets the same kind of bar.
+- When another program changes or deletes an open file, z++ asks in a modal dialog drawn in its own colors: Reload from disk, Keep my version, or Compare (a read-only diff tab, then it asks again). A deleted file offers Keep it open, Save it again, or Close the tab. Each change is asked about once; in the background z++ flashes its taskbar button and asks when you return. A check box lets a file with no unsaved edits reload without asking from then on.
+- A reload replaces only the lines that differ, so the caret and scroll position stay put and Undo goes back. A margin marks changed lines.
+- `ZPP_PROFILE=<name>` runs z++ with its own settings and its own window, separate from your everyday z++. The GUI tests use it, so they never touch your settings or open files.
 - Syntax highlighting for 24 languages, chosen by file name, with a Language menu to switch a tab to another language or plain text. Each theme colors code its own way: the Notepad++ themes use their own code colors, and the rest get colors computed to stay readable on their background.
 - Line numbers, on by default (View > Line Numbers).
 - Regular expressions in Find and Replace (ECMAScript syntax), with `\1` to `\9` in the replacement for captured groups. An invalid expression says so instead of finding nothing.

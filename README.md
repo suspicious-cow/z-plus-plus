@@ -14,7 +14,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - New, Open (several files at once), Save, Save As, Save All. Drag files onto the window to open them.
 - z++ reopens last time's files and window size on start, and keeps the last 10 files under File > Recent Files.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
-- If another program changes an open file, z++ reloads it, changing only the lines that differ and marking them in the margin. If you have unsaved edits in that tab, a bar above the text asks instead of a dialog. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
+- If another program changes or deletes an open file, z++ asks what to do in its own dialog: reload, keep your version, or compare the two. A reload changes only the lines that differ and marks them in the margin. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
 - Find in Files (Ctrl+Shift+F): search a folder and its subfolders, with a file filter such as `*.rs;*.toml`. Version control, dependency and build folders (`.git`, `node_modules`, `target`, `.venv` and similar) are skipped, and so are binary files. The hits fill a panel under the text; double-click one to open the file at that spot. Regular expressions here use [Rust's regex syntax](https://docs.rs/regex/latest/regex/#syntax) (no backreferences or lookaround), which keeps searches fast on big folders.
 - Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button) shows a Markdown tab formatted, with larger headings, bold and italic, inline code, underlined links, block quotes, lists, and tables, and you can keep typing in it. z++ does not convert anything: the tab still holds the Markdown and only hides markup such as `**`, `# `, and a link's `](address)` until the caret reaches it, where it shows dimmed so you can edit it. Lines you don't touch keep their exact bytes, so paragraphs are not reflowed, list markers stay as you typed them, and z++ never adds line breaks. Long lines wrap on screen only. Switching back and forth keeps the caret where it was, and Save writes the same `.md`. Tables keep their pipes instead of lining up in columns, and setext headings, reference-style links, and raw HTML show as plain text.
@@ -72,9 +72,9 @@ Other tools read the `EDITOR` or `VISUAL` environment variable. In Claude Code, 
 
 z++ also keeps up while an agent edits your files:
 
-- z++ checks the open file about once a second, even in the background. An unchanged tab reloads by itself, keeping your place.
+- z++ checks the open file about once a second. When it changed, a dialog in z++'s own colors names the file and offers Reload from disk, Keep my version, or Compare (the differences open in a new tab, then it asks again). It asks once per change. If z++ is in the background, its taskbar button flashes and the dialog waits until you come back.
 - A reload changes only the lines that differ and marks them in a thin margin left of the text. Your own unsaved edits get a mark there too. Undo goes back to the text before the reload.
-- If you have unsaved edits when the file changes on disk, a bar above the text offers Reload or Keep mine. Nothing pops up and nothing waits on you.
+- With unsaved edits, Reload asks you to confirm first. Without them, a box in the dialog lets that file reload without asking from then on, which suits a file a coding agent keeps editing. A deleted file offers Keep it open, Save it again, or Close the tab.
 - z++ never holds files open or locked, and it saves through a temporary file, so a save from z++ and a write from another program don't collide halfway.
 
 ## Keyboard shortcuts
@@ -135,7 +135,8 @@ Run the tests with `cargo test`.
 | [src/menu.rs](src/menu.rs) | Menu bar, command IDs, keyboard shortcuts |
 | [src/editor.rs](src/editor.rs) | The Scintilla edit control: text, selection, search |
 | [src/sci.rs](src/sci.rs) | Scintilla message numbers and the notification struct |
-| [src/notice.rs](src/notice.rs) | The bar above the text for "changed on disk" and similar news |
+| [src/ask.rs](src/ask.rs) | The modal question dialog, drawn in the theme's colors (used for "changed on disk") |
+| [src/profile.rs](src/profile.rs) | `ZPP_PROFILE`: separate settings and window for tests or a second setup |
 | [src/diff.rs](src/diff.rs) | Line diff, so a reload replaces only the lines that changed |
 | [src/wait.rs](src/wait.rs) | `zpp --wait` |
 | [src/mdview.rs](src/mdview.rs) | Rendered Markdown: styles the Markdown text so it reads formatted |

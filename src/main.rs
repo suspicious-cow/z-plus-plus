@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod ask;
 mod dialog;
 mod diff;
 mod docs;
@@ -12,8 +13,8 @@ mod gdi;
 mod languages;
 mod mdview;
 mod menu;
-mod notice;
 mod prefs;
+mod profile;
 mod results;
 mod sci;
 mod search;

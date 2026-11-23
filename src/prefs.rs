@@ -12,9 +12,9 @@ use windows_sys::Win32::System::Registry::{
 };
 
 use crate::fonts;
+use crate::profile::prefs_key;
 use crate::themes::{self, Colors};
 
-const PREFS_KEY: *const u16 = w!("Software\\z++");
 const PERSONALIZE_KEY: *const u16 =
     w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
 const MAX_STRING_UNITS: u32 = 256;
@@ -51,24 +51,25 @@ pub fn load() -> Prefs {
         last_light: read_string(w!("LastLightTheme")).unwrap_or_else(|| themes::LIGHT.into()),
         last_dark: read_string(w!("LastDarkTheme")).unwrap_or_else(|| themes::DARK.into()),
         custom: Colors {
-            fg: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("CustomText")).unwrap_or(light.fg),
-            bg: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("CustomBackground"))
+            fg: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("CustomText")).unwrap_or(light.fg),
+            bg: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("CustomBackground"))
                 .unwrap_or(light.bg),
         },
         face: read_string(w!("FontFace")).unwrap_or_else(|| fonts::DEFAULT_FACE.into()),
-        size_tenths: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("FontSize"))
+        size_tenths: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("FontSize"))
             .unwrap_or(fonts::DEFAULT_SIZE_TENTHS),
-        is_wrap: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("WordWrap")).is_some_and(|v| v != 0),
-        is_toolbar: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("Toolbar")).is_none_or(|v| v != 0),
-        is_status_bar: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("StatusBar"))
+        is_wrap: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("WordWrap")).is_some_and(|v| v != 0),
+        is_toolbar: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("Toolbar"))
             .is_none_or(|v| v != 0),
-        is_line_numbers: read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("LineNumbers"))
+        is_status_bar: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("StatusBar"))
+            .is_none_or(|v| v != 0),
+        is_line_numbers: read_dword(HKEY_CURRENT_USER, prefs_key(), w!("LineNumbers"))
             .is_none_or(|v| v != 0),
     }
 }
 
 pub fn load_session() -> Session {
-    let dword = |name| read_dword(HKEY_CURRENT_USER, PREFS_KEY, name);
+    let dword = |name| read_dword(HKEY_CURRENT_USER, prefs_key(), name);
     let window = match (
         dword(w!("WindowLeft")),
         dword(w!("WindowTop")),
@@ -116,7 +117,7 @@ fn read_paths(name: *const u16) -> Vec<PathBuf> {
     let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
-            PREFS_KEY,
+            prefs_key(),
             name,
             RRF_RT_REG_MULTI_SZ,
             null_mut(),
@@ -147,7 +148,7 @@ fn write_paths(name: *const u16, paths: &[PathBuf]) {
     unsafe {
         RegSetKeyValueW(
             HKEY_CURRENT_USER,
-            PREFS_KEY,
+            prefs_key(),
             name,
             REG_MULTI_SZ,
             units.as_ptr() as *const c_void,
@@ -175,7 +176,7 @@ fn legacy_theme() -> String {
     let system_dark =
         read_dword(HKEY_CURRENT_USER, PERSONALIZE_KEY, w!("AppsUseLightTheme")) == Some(0);
     let is_dark =
-        read_dword(HKEY_CURRENT_USER, PREFS_KEY, w!("DarkMode")).map_or(system_dark, |v| v != 0);
+        read_dword(HKEY_CURRENT_USER, prefs_key(), w!("DarkMode")).map_or(system_dark, |v| v != 0);
     if is_dark { themes::DARK } else { themes::LIGHT }.into()
 }
 
@@ -202,7 +203,7 @@ fn read_string(name: *const u16) -> Option<String> {
     let status = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
-            PREFS_KEY,
+            prefs_key(),
             name,
             RRF_RT_REG_SZ,
             null_mut(),
@@ -221,7 +222,7 @@ fn write_dword(name: *const u16, value: u32) {
     unsafe {
         RegSetKeyValueW(
             HKEY_CURRENT_USER,
-            PREFS_KEY,
+            prefs_key(),
             name,
             REG_DWORD,
             &value as *const u32 as *const c_void,
@@ -236,7 +237,7 @@ fn write_string(name: *const u16, value: &str) {
     unsafe {
         RegSetKeyValueW(
             HKEY_CURRENT_USER,
-            PREFS_KEY,
+            prefs_key(),
             name,
             REG_SZ,
             units.as_ptr() as *const c_void,
