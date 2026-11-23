@@ -43,6 +43,8 @@ pub const IDM_FONT_SMALLER: u16 = 132;
 pub const IDM_FONT_RESET: u16 = 133;
 pub const IDM_RENDERED: u16 = 134;
 pub const IDM_REMEMBER_UNSAVED: u16 = 135;
+pub const IDM_MOVE_TAB_LEFT: u16 = 136;
+pub const IDM_MOVE_TAB_RIGHT: u16 = 137;
 pub const IDM_LICENSES: u16 = 140;
 pub const IDM_ABOUT: u16 = 141;
 pub const IDM_ENC_UTF8: u16 = 150;
@@ -214,6 +216,8 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         SEPARATOR,
         (IDM_NEXT_TAB, "&Next Tab\tCtrl+Tab"),
         (IDM_PREV_TAB, "&Previous Tab\tCtrl+Shift+Tab"),
+        (IDM_MOVE_TAB_LEFT, "Move Tab &Left\tCtrl+Shift+PgUp"),
+        (IDM_MOVE_TAB_RIGHT, "Move Tab &Right\tCtrl+Shift+PgDn"),
     ]);
     insert_submenu(view, 0, theme_menu(), "T&heme");
     let help = popup(&[(IDM_LICENSES, "Font &Licenses"), (IDM_ABOUT, "&About z++")]);
@@ -411,6 +415,8 @@ pub unsafe fn accelerators() -> HACCEL {
         acc(ctrl_shift, VK_TAB, IDM_PREV_TAB),
         acc(ctrl, VK_NEXT, IDM_NEXT_TAB),
         acc(ctrl, VK_PRIOR, IDM_PREV_TAB),
+        acc(ctrl_shift, VK_PRIOR, IDM_MOVE_TAB_LEFT),
+        acc(ctrl_shift, VK_NEXT, IDM_MOVE_TAB_RIGHT),
         acc(ctrl, b'F' as u16, IDM_FIND),
         acc(ctrl, b'H' as u16, IDM_REPLACE),
         acc(ctrl_shift, b'F' as u16, IDM_FIND_IN_FILES),

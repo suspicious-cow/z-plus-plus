@@ -681,6 +681,90 @@ pub unsafe fn close_tab(index: usize) -> bool {
     true
 }
 
+/// The new tab order after moving tabs `moving` (any order) to insertion point `gap` (0 is
+/// before the first tab, `count` after the last): old indices, listed in their new places.
+/// The moved tabs keep their order among themselves.
+pub fn reorder(count: usize, moving: &[usize], gap: usize) -> Vec<usize> {
+    let mut moved: Vec<usize> = moving.iter().copied().filter(|&i| i < count).collect();
+    moved.sort_unstable();
+    moved.dedup();
+    let staying: Vec<usize> = (0..count).filter(|i| !moved.contains(i)).collect();
+    let at = staying.iter().filter(|&&i| i < gap).count();
+    let mut order = staying[..at].to_vec();
+    order.extend(&moved);
+    order.extend(&staying[at..]);
+    order
+}
+
+/// Where a step left (-1) or right (+1) puts the selected tabs, as an insertion point.
+pub fn step_gap(count: usize, moving: &[usize], step: isize) -> Option<usize> {
+    let first = *moving.iter().min()?;
+    let last = *moving.iter().max()?;
+    match step {
+        s if s < 0 && first > 0 => Some(first - 1),
+        s if s > 0 && last + 1 < count => Some(last + 2),
+        _ => None,
+    }
+}
+
+/// Moves tabs `moving` to insertion point `gap`, keeping the shown tab shown and the moved
+/// tabs selected.
+pub unsafe fn move_tabs(moving: &[usize], gap: usize) {
+    let order = reorder(count(), moving, gap);
+    if order.iter().enumerate().all(|(new, &old)| new == old) {
+        return;
+    }
+    let active = active_index();
+    app(|a| {
+        let mut docs = a.docs.borrow_mut();
+        let mut old: Vec<Option<Doc>> = docs.drain(..).map(Some).collect();
+        docs.extend(order.iter().map(|&i| old[i].take().expect("each tab once")));
+        a.active
+            .set(order.iter().position(|&i| i == active).unwrap_or(0));
+    });
+    let selected: Vec<usize> = order
+        .iter()
+        .enumerate()
+        .filter(|(_, old)| moving.contains(old))
+        .map(|(new, _)| new)
+        .collect();
+    refresh();
+    tabs::set_selected(&selected);
+    save_session_now();
+}
+
+/// Ctrl+Shift+PgUp / PgDn: the selected tabs one place left or right.
+pub unsafe fn move_selected(step: isize) {
+    let moving = tabs::selected();
+    if let Some(gap) = step_gap(count(), &moving, step) {
+        move_tabs(&moving, gap);
+    }
+}
+
+/// Closes tabs `indices`, right to left so the others keep their places, each asking about
+/// unsaved changes. Cancel on one stops the rest.
+pub unsafe fn close_tabs(indices: &[usize]) {
+    let mut list = indices.to_vec();
+    list.sort_unstable();
+    list.dedup();
+    for &index in list.iter().rev() {
+        if !close_tab(index) {
+            break;
+        }
+    }
+    save_session_now();
+}
+
+/// Every tab except `keep`.
+pub fn others(keep: &[usize]) -> Vec<usize> {
+    (0..count()).filter(|i| !keep.contains(i)).collect()
+}
+
+/// The tabs right of tab `index`.
+pub fn right_of(index: usize) -> Vec<usize> {
+    (index + 1..count()).collect()
+}
+
 /// Before exit: asks about every tab with unsaved changes. False if the user cancels.
 pub unsafe fn confirm_exit() -> bool {
     (0..count()).all(|i| confirm_discard(i))
@@ -1301,6 +1385,34 @@ mod tests {
 
     fn w(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()
+    }
+
+    #[test]
+    fn reorder_moves_groups_to_the_insertion_point() {
+        assert_eq!(reorder(5, &[1, 3], 5), [0, 2, 4, 1, 3]);
+        assert_eq!(reorder(5, &[3, 1], 0), [1, 3, 0, 2, 4]);
+        assert_eq!(reorder(5, &[1, 3], 3), [0, 2, 1, 3, 4]);
+        // Dropping a tab next to itself changes nothing.
+        assert_eq!(reorder(4, &[2], 2), [0, 1, 2, 3]);
+        assert_eq!(reorder(4, &[2], 3), [0, 1, 2, 3]);
+        assert_eq!(reorder(3, &[0, 1, 2], 1), [0, 1, 2]);
+        assert_eq!(reorder(3, &[7], 1), [0, 1, 2], "out of range is ignored");
+    }
+
+    #[test]
+    fn steps_stop_at_the_ends() {
+        assert_eq!(step_gap(5, &[2], -1), Some(1));
+        assert_eq!(step_gap(5, &[2], 1), Some(4));
+        assert_eq!(step_gap(5, &[0, 1], -1), None);
+        assert_eq!(step_gap(5, &[3, 4], 1), None);
+        assert_eq!(
+            reorder(5, &[2], step_gap(5, &[2], 1).unwrap()),
+            [0, 1, 3, 2, 4]
+        );
+        assert_eq!(
+            reorder(5, &[2], step_gap(5, &[2], -1).unwrap()),
+            [0, 2, 1, 3, 4]
+        );
     }
 
     #[test]

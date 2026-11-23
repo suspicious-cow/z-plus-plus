@@ -667,6 +667,8 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_STATUS_BAR => toggle_bar(false),
         IDM_LINE_NUMBERS => toggle_line_numbers(),
         IDM_REMEMBER_UNSAVED => toggle_remember_unsaved(),
+        IDM_MOVE_TAB_LEFT => docs::move_selected(-1),
+        IDM_MOVE_TAB_RIGHT => docs::move_selected(1),
         IDM_FONT_DIALOG => font_dialog(),
         IDM_FONT_BIGGER => set_size(app(|a| a.size.get()) + fonts::SIZE_STEP_TENTHS),
         IDM_FONT_SMALLER => set_size(app(|a| a.size.get()).saturating_sub(fonts::SIZE_STEP_TENTHS)),
@@ -713,6 +715,10 @@ unsafe fn on_tab(action: usize, index: usize) {
         tabs::TAB_NEW => {
             docs::new_tab();
         }
+        tabs::TAB_MOVE => docs::move_tabs(&tabs::selected(), index),
+        tabs::TAB_CLOSE_SELECTED => docs::close_tabs(&tabs::selected()),
+        tabs::TAB_CLOSE_OTHERS => docs::close_tabs(&docs::others(&tabs::selected())),
+        tabs::TAB_CLOSE_RIGHT => docs::close_tabs(&docs::right_of(index)),
         _ => {}
     }
 }

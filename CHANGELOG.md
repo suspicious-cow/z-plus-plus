@@ -6,6 +6,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Tab control: drag a tab to move it; Ctrl+click and Shift+click select several tabs and a drag moves them together. Right-click a tab for Close (Close N Tabs for a selection), Close Others, and Close Tabs to the Right; unsaved tabs still ask, and Cancel stops the rest. Ctrl+Shift+PgUp and Ctrl+Shift+PgDn (View > Move Tab Left, Right) move the selected tabs one place. The saved session follows the new order.
 - Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button on the toolbar): a Markdown tab shows its text formatted and stays editable. Markup is hidden until the caret is inside it, and nothing is converted, so text you don't edit keeps its exact bytes and Save writes the same file.
 - Find in Files (Ctrl+Shift+F) with a file filter, match case, whole word and regular expressions. It searches on a background thread, skips build and dependency folders and binary files, and lists hits in a panel under the text; double-click a hit to open it. View > Search Results hides the panel.
 - `zpp file:42` and `zpp file:42:7` open a file at a line and column, the form compilers and coding agents print.
@@ -46,6 +47,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Tab control: drag a tab to move it; Ctrl+click and Shift+click select several tabs and a drag moves them together. Right-click a tab for Close (Close N Tabs for a selection), Close Others, and Close Tabs to the Right; unsaved tabs still ask, and Cancel stops the rest. Ctrl+Shift+PgUp and Ctrl+Shift+PgDn (View > Move Tab Left, Right) move the selected tabs one place. The saved session follows the new order.
 - 13 color themes and a Custom theme with your own text and background colors.
 - Ctrl+Shift+D switches between the last light and dark theme you used.
 - 11 open-licensed monospace fonts built into the exe, a Font menu with the common Windows monospace fonts, and the Windows font dialog for any installed font.
@@ -58,6 +60,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- Tab control: drag a tab to move it; Ctrl+click and Shift+click select several tabs and a drag moves them together. Right-click a tab for Close (Close N Tabs for a selection), Close Others, and Close Tabs to the Right; unsaved tabs still ask, and Cancel stops the rest. Ctrl+Shift+PgUp and Ctrl+Shift+PgDn (View > Move Tab Left, Right) move the selected tabs one place. The saved session follows the new order.
 - First version: New, Open, Save, Save As, undo, redo and clipboard commands, word wrap, and a light and dark mode.
 - Native builds for Windows ARM64 and x64 with a statically linked C runtime.
 - Keeps UTF-8, UTF-8 BOM, UTF-16 LE and ANSI encodings and LF line endings, and refuses files it could not save back unchanged.

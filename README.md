@@ -10,7 +10,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 
 ## Features
 
-- Tabs: each open file gets a tab with its own undo history. A dot on a tab means unsaved changes. Opening a file that is already open switches to its tab, and a file opened from Explorer while z++ is running opens as a new tab in that window (`zpp.exe --new-window` opens a second window instead).
+- Tabs: each open file gets a tab with its own undo history. A dot on a tab means unsaved changes. Opening a file that is already open switches to its tab, and a file opened from Explorer while z++ is running opens as a new tab in that window (`zpp.exe --new-window` opens a second window instead). Drag a tab to move it. Ctrl+click and Shift+click select several tabs, and dragging any of them moves the group. Right-click a tab for Close (or Close 3 Tabs), Close Others, and Close Tabs to the Right.
 - New, Open (several files at once), Save, Save As, Save All. Drag files onto the window to open them.
 - z++ remembers what you were working on, like Notepad++. It reopens every tab you had open, in the same order, with the same tab in front and the caret and scroll where you left them, even after a crash or a forced restart (it saves the list every couple of seconds). A tab you close yourself drops out. Unsaved edits are kept too: closing z++ doesn't ask, and next time those tabs come back still unsaved, with Undo going back to the file's text. File > Remember Unsaved Changes turns that off. File > Recent Files keeps the last 20 files.
 - Saving writes to a temporary file first and swaps it in, so a crash or full disk during a save leaves the old file intact.
@@ -85,6 +85,7 @@ z++ also keeps up while an agent edits your files:
 | Save As | Ctrl+Shift+S |
 | Close tab | Ctrl+W, or middle-click the tab |
 | Next, previous tab | Ctrl+Tab, Ctrl+Shift+Tab (or Ctrl+PgDn, Ctrl+PgUp) |
+| Move the selected tabs left, right | Ctrl+Shift+PgUp, Ctrl+Shift+PgDn |
 | Undo, Redo | Ctrl+Z, Ctrl+Y |
 | Cut, Copy, Paste, Select All | Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A |
 | Find, Replace | Ctrl+F, Ctrl+H |
@@ -125,7 +126,7 @@ Run the tests with `cargo test`.
 | [src/docs.rs](src/docs.rs) | Open files: tabs, open, save, close, reload, recent files, session |
 | [src/session.rs](src/session.rs) | The saved tab list and the backup files that keep unsaved edits between runs |
 | [src/toolbar.rs](src/toolbar.rs) | The toolbar, drawn in the current theme's colors |
-| [src/tabs.rs](src/tabs.rs) | The tab strip |
+| [src/tabs.rs](src/tabs.rs) | The tab strip: selection, dragging, and the right-click menu |
 | [src/statusbar.rs](src/statusbar.rs) | The status bar |
 | [src/find.rs](src/find.rs) | Find and Replace |
 | [src/findfiles.rs](src/findfiles.rs) | The Find in Files dialog |
