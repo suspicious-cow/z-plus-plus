@@ -46,6 +46,17 @@ pub fn is_test() -> bool {
     *IS_TEST.get_or_init(|| name().is_some() && std::env::var(TEST_VAR).is_ok_and(|v| v == "1"))
 }
 
+/// How to show a top-level window: never activated in a GUI check, so a test window can't take
+/// the keyboard from whatever the user is typing in.
+pub fn show_cmd() -> windows_sys::Win32::UI::WindowsAndMessaging::SHOW_WINDOW_CMD {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SW_SHOW, SW_SHOWNOACTIVATE};
+    if is_test() {
+        SW_SHOWNOACTIVATE
+    } else {
+        SW_SHOW
+    }
+}
+
 /// HKCU subkey holding this profile's settings, NUL-terminated.
 pub fn prefs_key() -> *const u16 {
     static KEY: OnceLock<Vec<u16>> = OnceLock::new();

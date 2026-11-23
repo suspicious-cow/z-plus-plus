@@ -68,7 +68,7 @@ pub unsafe fn open(owner: HWND, edit: HWND) {
         DIALOG.with(|d| d.set(hwnd));
     }
     load(hwnd);
-    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd, crate::profile::show_cmd());
     dialog::focus_all(hwnd, ID_FIND_WHAT);
 }
 

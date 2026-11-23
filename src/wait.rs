@@ -69,7 +69,9 @@ pub unsafe fn run(paths: &[PathBuf], class_name: *const u16) -> i32 {
         cbData: (data.len() * 2) as u32,
         lpData: data.as_ptr() as *mut c_void,
     };
-    AllowSetForegroundWindow(pid);
+    if !crate::profile::is_test() {
+        AllowSetForegroundWindow(pid);
+    }
     // An older z++ that does not know this message answers 0.
     let is_accepted = SendMessageW(window, WM_COPYDATA, 0, &cds as *const _ as LPARAM) == 1;
     let code = if !is_accepted {

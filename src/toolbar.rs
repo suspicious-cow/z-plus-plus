@@ -38,6 +38,8 @@ const CAPTION_H: i32 = 18;
 const PAD: i32 = 4;
 const GAP: i32 = 2;
 const GROUP_GAP: i32 = 12;
+/// Glyph color of a button that does nothing in this tab.
+const DIMMED_MIX: u32 = 40;
 const LARGE_MIN_W: i32 = 46;
 const LARGE_H: i32 = 64;
 const SMALL_H: i32 = 28;
@@ -155,6 +157,14 @@ const GROUPS: &[Group] = &[
                 },
             ],
             &[
+                small(IDM_BOLD, 0xE8DD, "", "Bold (Ctrl+B), Markdown files"),
+                small(IDM_ITALIC, 0xE8DB, "", "Italic (Ctrl+I), Markdown files"),
+                small(
+                    IDM_UNDERLINE,
+                    0xE8DC,
+                    "",
+                    "Underline (Ctrl+U), Markdown files: saved as <u>...</u>",
+                ),
                 small(IDM_FONT_BIGGER, 0xE8E8, "", "Bigger (Ctrl+=)"),
                 small(IDM_FONT_SMALLER, 0xE8E7, "", "Smaller (Ctrl+-)"),
                 small(IDM_TEXT_COLOR, 0xE8D3, "", "Text color"),
@@ -227,6 +237,8 @@ struct Toolbar {
     colors: Cell<Colors>,
     is_wrap: Cell<bool>,
     is_rendered: Cell<bool>,
+    /// Bold, Italic, and Underline only work in Markdown tabs; dimmed elsewhere.
+    is_markdown: Cell<bool>,
     combos: Cell<[HWND; 3]>,
     ui_font: Cell<HFONT>,
     icon_font: Cell<HFONT>,
@@ -252,6 +264,7 @@ thread_local! {
         colors: Cell::new(themes::PRESETS[0].colors),
         is_wrap: Cell::new(false),
         is_rendered: Cell::new(false),
+        is_markdown: Cell::new(false),
         combos: Cell::new([null_mut(); 3]),
         ui_font: Cell::new(null_mut()),
         icon_font: Cell::new(null_mut()),
@@ -540,6 +553,14 @@ pub unsafe fn set_colors(colors: Colors) {
 pub unsafe fn set_rendered(is_rendered: bool) {
     let (hwnd, was) = tb(|t| (t.hwnd.get(), t.is_rendered.replace(is_rendered)));
     if was != is_rendered && !hwnd.is_null() {
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+/// Dims Bold, Italic, and Underline unless the active tab is Markdown.
+pub unsafe fn set_markdown(is_markdown: bool) {
+    let (hwnd, was) = tb(|t| (t.hwnd.get(), t.is_markdown.replace(is_markdown)));
+    if was != is_markdown && !hwnd.is_null() {
         InvalidateRect(hwnd, null(), 0);
     }
 }
@@ -865,6 +886,7 @@ unsafe fn paint(hwnd: HWND) {
 }
 
 unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
+    let is_markdown = tb(|t| t.is_markdown.get());
     let (rect, id, glyph, label, kind, hot, pressed, is_wrap, is_rendered) = tb(|t| {
         let b = &t.buttons.borrow()[index];
         (
@@ -897,7 +919,13 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
         IDM_TOGGLE_DARK => (GLYPH_MOON, "Dark"),
         _ => (glyph, label),
     };
-    SetTextColor(hdc, colors.fg);
+    let is_dimmed = !is_markdown && matches!(id, IDM_BOLD | IDM_ITALIC | IDM_UNDERLINE);
+    let fore = if is_dimmed {
+        themes::mix(colors.bg, colors.fg, DIMMED_MIX)
+    } else {
+        colors.fg
+    };
+    SetTextColor(hdc, fore);
     let (icon_font, small_icon_font, ui_font) =
         tb(|t| (t.icon_font.get(), t.small_icon_font.get(), t.ui_font.get()));
     let glyph_text = [glyph];

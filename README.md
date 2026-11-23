@@ -17,6 +17,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - If another program changes or deletes an open file, z++ asks what to do in its own dialog: reload, keep your version, or compare the two. A reload changes only the lines that differ and marks them in the margin. See [Command line, git and coding agents](#command-line-git-and-coding-agents).
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
 - Find in Files (Ctrl+Shift+F): search a folder and its subfolders, with a file filter such as `*.rs;*.toml`. Version control, dependency and build folders (`.git`, `node_modules`, `target`, `.venv` and similar) are skipped, and so are binary files. The hits fill a panel under the text; double-click one to open the file at that spot. Regular expressions here use [Rust's regex syntax](https://docs.rs/regex/latest/regex/#syntax) (no backreferences or lookaround), which keeps searches fast on big folders.
+- Bold, Italic, and Underline (Format menu, the B, I, and U buttons, or Ctrl+B, Ctrl+I, Ctrl+U) in Markdown files. Since Markdown is plain text, they wrap the selection in `**bold**` or `*italic*`, and pressing again takes them off; with only a caret they work on the word under it. Markdown has no underline, so it is saved as the HTML tags `<u>...</u>`, which z++ and many Markdown viewers show underlined; some viewers drop HTML and show the word plain. Other files can't store formatting, so the buttons are dimmed there and Ctrl+U keeps lowercasing the selection.
 - Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button) shows a Markdown tab formatted, with larger headings, bold and italic, inline code, underlined links, block quotes, lists, and tables, and you can keep typing in it. z++ does not convert anything: the tab still holds the Markdown and only hides markup such as `**`, `# `, and a link's `](address)` until the caret reaches it, where it shows dimmed so you can edit it. Lines you don't touch keep their exact bytes, so paragraphs are not reflowed, list markers stay as you typed them, and z++ never adds line breaks. Long lines wrap on screen only. Switching back and forth keeps the caret where it was, and Save writes the same `.md`. Tables keep their pipes instead of lining up in columns, and setext headings, reference-style links, and raw HTML show as plain text.
 
   ![Rendered Markdown](docs/screenshots/rendered-markdown.png)
@@ -86,6 +87,7 @@ z++ also keeps up while an agent edits your files:
 | Close tab | Ctrl+W, or middle-click the tab |
 | Next, previous tab | Ctrl+Tab, Ctrl+Shift+Tab (or Ctrl+PgDn, Ctrl+PgUp) |
 | Move the selected tabs left, right | Ctrl+Shift+PgUp, Ctrl+Shift+PgDn |
+| Bold, italic, underline (Markdown) | Ctrl+B, Ctrl+I, Ctrl+U |
 | Undo, Redo | Ctrl+Z, Ctrl+Y |
 | Cut, Copy, Paste, Select All | Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A |
 | Find, Replace | Ctrl+F, Ctrl+H |
@@ -126,6 +128,7 @@ Run the tests with `cargo test`.
 | [src/docs.rs](src/docs.rs) | Open files: tabs, open, save, close, reload, recent files, session |
 | [src/session.rs](src/session.rs) | The saved tab list and the backup files that keep unsaved edits between runs |
 | [src/toolbar.rs](src/toolbar.rs) | The toolbar, drawn in the current theme's colors |
+| [src/format.rs](src/format.rs) | Bold, Italic, and Underline as Markdown markup |
 | [src/tabs.rs](src/tabs.rs) | The tab strip: selection, dragging, and the right-click menu |
 | [src/statusbar.rs](src/statusbar.rs) | The status bar |
 | [src/find.rs](src/find.rs) | Find and Replace |

@@ -33,6 +33,9 @@ pub const TAB_CLOSE_OTHERS: usize = 5;
 pub const TAB_CLOSE_RIGHT: usize = 6;
 /// For GUI checks: wparam is a tab index; returns its left and right edges as MAKELONG.
 pub const WM_APP_TAB_RECT: u32 = WM_APP + 30;
+/// For GUI checks (ZPP_TEST): the menu the last right-click built, as an HMENU; WM_COMMAND
+/// with one of its ids then runs that item.
+pub const WM_APP_TAB_MENU: u32 = WM_APP + 31;
 
 const CLASS: *const u16 = w!("ZppTabs");
 const HEIGHT: i32 = 30;
@@ -99,6 +102,7 @@ struct Strip {
 }
 
 thread_local! {
+    static TEST_MENU: Cell<Option<(HMENU, usize)>> = const { Cell::new(None) };
     static STRIP: Strip = const { Strip {
         hwnd: Cell::new(null_mut()),
         tabs: RefCell::new(Vec::new()),
@@ -337,6 +341,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 ((rc.left & 0xFFFF) | ((rc.right & 0xFFFF) << 16)) as LRESULT
             })
         }),
+        WM_APP_TAB_MENU => TEST_MENU
+            .with(|m| m.get())
+            .map_or(0, |(menu, _)| menu as LRESULT),
+        WM_COMMAND => {
+            if let Some((_, index)) = TEST_MENU.with(|m| m.get()) {
+                run_menu_item(wparam & 0xFFFF, index);
+            }
+            0
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -493,6 +506,26 @@ unsafe fn on_right_click(hwnd: HWND, lparam: LPARAM) {
         strip(|t| t.anchor.set(index));
         post(TAB_SELECT, index);
     }
+    let menu = build_menu(index);
+    if crate::profile::is_test() {
+        // A popup menu takes the keyboard; a GUI check reads it with WM_APP_TAB_MENU instead.
+        let old = TEST_MENU.with(|m| m.replace(Some((menu, index))));
+        if let Some((old, _)) = old {
+            DestroyMenu(old);
+        }
+        return;
+    }
+    let (x, y) = point(lparam);
+    let mut pt = POINT { x, y };
+    ClientToScreen(hwnd, &mut pt);
+    let flags = TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY;
+    let id = TrackPopupMenu(menu, flags, pt.x, pt.y, 0, GetParent(hwnd), null()) as usize;
+    DestroyMenu(menu);
+    run_menu_item(id, index);
+}
+
+/// Close (or Close N Tabs), Close Others, Close Tabs to the Right, for a right-click on `index`.
+unsafe fn build_menu(index: usize) -> HMENU {
     let count = strip(|t| t.tabs.borrow().len());
     let chosen = selected().len();
     let close = if chosen > 1 {
@@ -519,12 +552,10 @@ unsafe fn on_right_click(hwnd: HWND, lparam: LPARAM) {
         };
         AppendMenuW(menu, flags, id, text.as_ptr());
     }
-    let (x, y) = point(lparam);
-    let mut pt = POINT { x, y };
-    ClientToScreen(hwnd, &mut pt);
-    let flags = TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY;
-    let id = TrackPopupMenu(menu, flags, pt.x, pt.y, 0, GetParent(hwnd), null()) as usize;
-    DestroyMenu(menu);
+    menu
+}
+
+unsafe fn run_menu_item(id: usize, index: usize) {
     match id {
         MENU_CLOSE => post(TAB_CLOSE_SELECTED, index),
         MENU_CLOSE_OTHERS => post(TAB_CLOSE_OTHERS, index),
@@ -532,7 +563,6 @@ unsafe fn on_right_click(hwnd: HWND, lparam: LPARAM) {
         _ => {}
     }
 }
-
 unsafe fn paint(hwnd: HWND) {
     let mut ps: PAINTSTRUCT = zeroed();
     let hdc = BeginPaint(hwnd, &mut ps);

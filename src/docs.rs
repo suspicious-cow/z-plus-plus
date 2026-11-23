@@ -16,7 +16,8 @@ use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
 use crate::{
-    ask, diff, editor, mdview, menu, prefs, profile, sci, session, statusbar, tabs, theme, wait,
+    ask, diff, editor, format, mdview, menu, prefs, profile, sci, session, statusbar, tabs, theme,
+    wait,
 };
 
 const UNTITLED: &str = "Untitled";
@@ -125,6 +126,23 @@ pub fn lexer_language(index: usize) -> Option<&'static Language> {
     }
 }
 
+/// Format > Bold, Italic, Underline: Markdown markup around the selection. Other files are
+/// plain text and can't hold formatting; there Ctrl+U keeps its old job, lowercase.
+pub unsafe fn format_selection(style: format::Style) {
+    let edit = app(|a| a.edit.get());
+    if is_active_markdown() {
+        format::apply(edit, style);
+        return;
+    }
+    if style == format::Style::Underline {
+        SendMessageW(edit, sci::SCI_LOWERCASE, 0, 0);
+        return;
+    }
+    statusbar::set_message(
+        "Bold, italic, and underline are for Markdown files: plain text can't store them",
+    );
+    update_status();
+}
 /// View > Rendered Markdown: switches the active tab between its Markdown source and the
 /// formatted view. Both edit the same text, and the caret stays where it was.
 pub unsafe fn toggle_rendered() {

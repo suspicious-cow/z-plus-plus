@@ -9,6 +9,7 @@ mod file;
 mod find;
 mod findfiles;
 mod fonts;
+mod format;
 mod gdi;
 mod languages;
 mod mdview;

@@ -25,8 +25,8 @@ use crate::menu::*;
 use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors, Syntax};
 use crate::{
-    dialog, editor, find, findfiles, fonts, menu, prefs, profile, results, statusbar, tabs, theme,
-    toolbar, wait, wide,
+    dialog, editor, find, findfiles, fonts, format, menu, prefs, profile, results, statusbar, tabs,
+    theme, toolbar, wait, wide,
 };
 
 pub const APP_NAME: &str = "z++";
@@ -242,7 +242,9 @@ unsafe fn hand_off(paths: &[PathBuf]) -> bool {
     };
     let mut pid = 0u32;
     GetWindowThreadProcessId(existing, &mut pid);
-    AllowSetForegroundWindow(pid);
+    if !profile::is_test() {
+        AllowSetForegroundWindow(pid);
+    }
     SendMessageW(existing, WM_COPYDATA, 0, &cds as *const _ as LPARAM);
     true
 }
@@ -667,6 +669,9 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_STATUS_BAR => toggle_bar(false),
         IDM_LINE_NUMBERS => toggle_line_numbers(),
         IDM_REMEMBER_UNSAVED => toggle_remember_unsaved(),
+        IDM_BOLD => docs::format_selection(format::Style::Bold),
+        IDM_ITALIC => docs::format_selection(format::Style::Italic),
+        IDM_UNDERLINE => docs::format_selection(format::Style::Underline),
         IDM_MOVE_TAB_LEFT => docs::move_selected(-1),
         IDM_MOVE_TAB_RIGHT => docs::move_selected(1),
         IDM_FONT_DIALOG => font_dialog(),
@@ -799,10 +804,12 @@ unsafe fn on_copy_data(hwnd: HWND, lparam: LPARAM) -> LRESULT {
         }
     }
     app(|a| a.pending_open.borrow_mut().extend(paths));
-    if IsIconic(hwnd) != 0 {
-        ShowWindow(hwnd, SW_RESTORE);
+    if !profile::is_test() {
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        SetForegroundWindow(hwnd);
     }
-    SetForegroundWindow(hwnd);
     PostMessageW(hwnd, WM_APP_OPEN_PENDING, 0, 0);
     1
 }
@@ -920,6 +927,7 @@ pub unsafe fn sync_menu_checks() {
     let is_rendered = docs::is_rendered(docs::active_index());
     let is_markdown = docs::is_active_markdown();
     toolbar::set_rendered(is_rendered);
+    toolbar::set_markdown(is_markdown);
     app(|a| {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();

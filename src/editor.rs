@@ -187,6 +187,17 @@ fn line_offset(lines: &[&[u8]], n: usize) -> usize {
     lines[..n].iter().map(|l| l.len()).sum()
 }
 
+/// All text as UTF-8 bytes, positions matching Scintilla's.
+pub unsafe fn utf8(edit: HWND) -> Vec<u8> {
+    utf8_text(edit)
+}
+
+/// Replaces bytes `start..end` with `with`.
+pub unsafe fn replace_range(edit: HWND, start: usize, end: usize, with: &str) {
+    send(edit, SCI_SETTARGETRANGE, start, end as isize);
+    send(edit, SCI_REPLACETARGET, with.len(), with.as_ptr() as isize);
+}
+
 fn utf8_text(edit: HWND) -> Vec<u8> {
     unsafe {
         let len = text_len(edit) as usize;

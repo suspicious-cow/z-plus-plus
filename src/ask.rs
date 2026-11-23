@@ -19,7 +19,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::gdi::{self, s};
 use crate::themes::{self, Colors};
-use crate::{wide, window};
+use crate::{profile, wide, window};
 
 /// What `ask` returns for Escape.
 pub const CANCELED: i32 = 2;
@@ -135,7 +135,7 @@ pub unsafe fn ask(owner: HWND, q: &Question) -> (i32, bool) {
         return (CANCELED, false);
     }
     EnableWindow(owner, 0);
-    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd, profile::show_cmd());
     SetFocus(hwnd);
     let mut msg: MSG = zeroed();
     while state(|st| st.answer.is_none()) {
@@ -149,7 +149,9 @@ pub unsafe fn ask(owner: HWND, q: &Question) -> (i32, bool) {
     }
     EnableWindow(owner, 1);
     DestroyWindow(hwnd);
-    SetActiveWindow(owner);
+    if !profile::is_test() {
+        SetActiveWindow(owner);
+    }
     QUESTION.with(|slot| slot.borrow_mut().take());
     state(|st| (st.answer.unwrap_or(CANCELED), st.is_checked))
 }

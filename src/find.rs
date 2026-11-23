@@ -69,7 +69,7 @@ pub unsafe fn open(owner: HWND, edit: HWND, is_replace: bool) {
     }
     show_mode(hwnd, is_replace);
     load_options(hwnd);
-    ShowWindow(hwnd, SW_SHOW);
+    ShowWindow(hwnd, crate::profile::show_cmd());
     dialog::focus_all(hwnd, ID_FIND_WHAT);
 }
 
