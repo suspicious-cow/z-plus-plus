@@ -151,6 +151,17 @@ fn tip_of(tool: Tool) -> &'static str {
     }
 }
 
+/// The tools' names, which become the window text so screen readers and checks can read them
+/// (another process's GetWindowText reads the stored text and never asks the window).
+fn tools_text(tools: &[Tool]) -> String {
+    tools
+        .iter()
+        .filter(|&&t| t != Tool::Separator)
+        .map(|&t| tip_of(t))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 /// Button widths, with separators narrower.
 fn widths(tools: &[Tool]) -> Vec<i32> {
     tools
@@ -353,6 +364,11 @@ unsafe fn show() {
         b.colors.set(window::look_parts().0);
         b.shown_for.set((span.start, span.end));
     });
+    let text: Vec<u16> = tools_text(&tools)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    SetWindowTextW(hwnd, text.as_ptr());
     SetWindowPos(
         hwnd,
         null_mut(),
@@ -367,6 +383,12 @@ unsafe fn show() {
 }
 
 unsafe fn work_area(edit: HWND) -> RECT {
+    // Test windows sit off-screen, where the nearest monitor would push the bar back on screen.
+    if crate::profile::is_test() {
+        let mut rc: RECT = zeroed();
+        GetWindowRect(window::app(|a| a.main.get()), &mut rc);
+        return rc;
+    }
     let monitor = MonitorFromWindow(edit, MONITOR_DEFAULTTONEAREST);
     let mut info: MONITORINFO = zeroed();
     info.cbSize = size_of::<MONITORINFO>() as u32;
@@ -475,26 +497,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 run(tool);
             }
             0
-        }
-        WM_GETTEXT | WM_GETTEXTLENGTH => {
-            // Screen readers and checks read the tools as the window text.
-            let text = bar(|b| {
-                b.tools
-                    .borrow()
-                    .iter()
-                    .filter(|&&t| t != Tool::Separator)
-                    .map(|&t| tip_of(t))
-                    .collect::<Vec<_>>()
-                    .join(" | ")
-            });
-            let units: Vec<u16> = text.encode_utf16().collect();
-            if msg == WM_GETTEXTLENGTH {
-                return units.len() as LRESULT;
-            }
-            let n = units.len().min(wparam.saturating_sub(1));
-            std::ptr::copy_nonoverlapping(units.as_ptr(), lparam as *mut u16, n);
-            *(lparam as *mut u16).add(n) = 0;
-            n as LRESULT
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -606,5 +608,9 @@ mod tests {
             }
         }
         assert_eq!(widths(&TEXT_TOOLS).len(), TEXT_TOOLS.len());
+        assert_eq!(
+            tools_text(&TEXT_TOOLS),
+            "Cut | Copy | UPPERCASE | lowercase"
+        );
     }
 }
