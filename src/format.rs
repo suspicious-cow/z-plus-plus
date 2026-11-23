@@ -13,6 +13,10 @@ pub enum Style {
     Bold,
     Italic,
     Underline,
+    /// Inline code, `like this`.
+    Code,
+    /// `~~struck~~`.
+    Strike,
 }
 
 /// Replace bytes `start..end` with `with`, then select `select`.
@@ -29,6 +33,8 @@ fn markers(style: Style) -> (&'static str, &'static str) {
         Style::Bold => ("**", "**"),
         Style::Italic => ("*", "*"),
         Style::Underline => ("<u>", "</u>"),
+        Style::Code => ("`", "`"),
+        Style::Strike => ("~~", "~~"),
     }
 }
 
@@ -46,7 +52,7 @@ fn runs_hold(style: Style, before: usize, after: usize) -> bool {
     match style {
         Style::Bold => before >= 2 && after >= 2,
         Style::Italic => before % 2 == 1 && after % 2 == 1,
-        Style::Underline => false,
+        _ => false,
     }
 }
 
@@ -69,10 +75,10 @@ pub fn toggle(text: &[u8], from: usize, to: usize, word: (usize, usize), style: 
     let inner = String::from_utf8_lossy(&text[from..to]).into_owned();
     // Markup just outside the selection: take it off.
     let is_outside = match style {
-        Style::Underline => {
-            text[..from].ends_with(open.as_bytes()) && text[to..].starts_with(close.as_bytes())
+        Style::Bold | Style::Italic => {
+            runs_hold(style, stars_before(text, from), stars_after(text, to))
         }
-        _ => runs_hold(style, stars_before(text, from), stars_after(text, to)),
+        _ => text[..from].ends_with(open.as_bytes()) && text[to..].starts_with(close.as_bytes()),
     };
     if is_outside {
         let start = from - open.len();
@@ -87,8 +93,10 @@ pub fn toggle(text: &[u8], from: usize, to: usize, word: (usize, usize), style: 
     let b = inner.as_bytes();
     let is_inside = b.len() >= open.len() + close.len()
         && match style {
-            Style::Underline => inner.starts_with(open) && inner.ends_with(close),
-            _ => runs_hold(style, stars_after(b, 0), stars_before(b, b.len())),
+            Style::Bold | Style::Italic => {
+                runs_hold(style, stars_after(b, 0), stars_before(b, b.len()))
+            }
+            _ => inner.starts_with(open) && inner.ends_with(close),
         };
     if is_inside {
         let bare = inner[open.len()..inner.len() - close.len()].to_string();
@@ -108,8 +116,55 @@ pub fn toggle(text: &[u8], from: usize, to: usize, word: (usize, usize), style: 
     }
 }
 
-/// Applies `style` to the selection in `edit` as one undo step.
-pub unsafe fn apply(edit: HWND, style: Style) {
+/// `[selection](url)` with `url` selected, ready to type the address over.
+pub fn link(text: &[u8], from: usize, to: usize, word: (usize, usize)) -> Change {
+    let (mut from, mut to) = (from.min(to), from.max(to).min(text.len()));
+    if from == to && word.0 < word.1 {
+        (from, to) = word;
+    }
+    let inner = String::from_utf8_lossy(&text[from..to]).into_owned();
+    let url_at = from + 1 + inner.len() + 2;
+    Change {
+        start: from,
+        end: to,
+        with: format!("[{inner}](url)"),
+        select: (url_at, url_at + "url".len()),
+    }
+}
+
+/// Adds `prefix` (`# `, `- `, `> `) to every line the selection touches, or takes it off if
+/// they all have it.
+pub fn toggle_prefix(text: &[u8], from: usize, to: usize, prefix: &str) -> Change {
+    let (from, to) = (from.min(to).min(text.len()), from.max(to).min(text.len()));
+    let start = text[..from]
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map_or(0, |i| i + 1);
+    let end = text[to..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map_or(text.len(), |i| to + i);
+    let block = String::from_utf8_lossy(&text[start..end]).into_owned();
+    let lines: Vec<&str> = block.split('\n').collect();
+    let is_all = lines.iter().all(|l| l.starts_with(prefix));
+    let with = lines
+        .iter()
+        .map(|l| match is_all {
+            true => l[prefix.len()..].to_string(),
+            false => format!("{prefix}{l}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Change {
+        start,
+        end,
+        select: (start, start + with.len()),
+        with,
+    }
+}
+
+/// The text, the selection, and the word around the caret.
+unsafe fn selection_and_word(edit: HWND) -> (Vec<u8>, usize, usize, (usize, usize)) {
     let text = editor::utf8(edit);
     let span = editor::selection(edit);
     let caret = span.start.max(0) as usize;
@@ -117,7 +172,11 @@ pub unsafe fn apply(edit: HWND, style: Style) {
         SendMessageW(edit, sci::SCI_WORDSTARTPOSITION, caret, 1).max(0) as usize,
         SendMessageW(edit, sci::SCI_WORDENDPOSITION, caret, 1).max(0) as usize,
     );
-    let change = toggle(&text, span.start as usize, span.end as usize, word, style);
+    let (from, to) = (span.start.max(0) as usize, span.end.max(0) as usize);
+    (text, from, to, word)
+}
+
+unsafe fn apply_change(edit: HWND, change: &Change) {
     editor::begin_undo(edit);
     editor::replace_range(edit, change.start, change.end, &change.with);
     editor::end_undo(edit);
@@ -127,6 +186,22 @@ pub unsafe fn apply(edit: HWND, style: Style) {
         change.select.0,
         change.select.1 as isize,
     );
+}
+
+/// Applies `style` to the selection in `edit` as one undo step.
+pub unsafe fn apply(edit: HWND, style: Style) {
+    let (text, from, to, word) = selection_and_word(edit);
+    apply_change(edit, &toggle(&text, from, to, word, style));
+}
+
+pub unsafe fn apply_link(edit: HWND) {
+    let (text, from, to, word) = selection_and_word(edit);
+    apply_change(edit, &link(&text, from, to, word));
+}
+
+pub unsafe fn apply_prefix(edit: HWND, prefix: &str) {
+    let (text, from, to, _) = selection_and_word(edit);
+    apply_change(edit, &toggle_prefix(&text, from, to, prefix));
 }
 
 #[cfg(test)]
@@ -184,6 +259,26 @@ mod tests {
         assert_eq!(run("a bi[]g cat", Style::Bold), "a **[big]** cat");
         assert_eq!(run("a **bi[]g** cat", Style::Bold), "a [big] cat");
         assert_eq!(run("end [] ", Style::Italic), "end *[]* ");
+    }
+
+    #[test]
+    fn code_strike_and_link() {
+        assert_eq!(run("a [big] cat", Style::Code), "a `[big]` cat");
+        assert_eq!(run("a `[big]` cat", Style::Code), "a [big] cat");
+        assert_eq!(run("a [big] cat", Style::Strike), "a ~~[big]~~ cat");
+        assert_eq!(run("a ~~[big]~~ cat", Style::Strike), "a [big] cat");
+        let c = link(b"see docs now", 4, 8, (4, 8));
+        assert_eq!(c.with, "[docs](url)");
+        assert_eq!(&c.with[c.select.0 - c.start..c.select.1 - c.start], "url");
+    }
+
+    #[test]
+    fn prefixes_go_on_every_touched_line_and_come_off() {
+        let c = toggle_prefix(b"one\ntwo\nthree", 1, 5, "- ");
+        assert_eq!((c.start, c.end, c.with.as_str()), (0, 7, "- one\n- two"));
+        let c = toggle_prefix(b"> one\n> two\nthree", 2, 8, "> ");
+        assert_eq!(c.with, "one\ntwo");
+        assert_eq!(toggle_prefix(b"title", 0, 0, "# ").with, "# title");
     }
 
     #[test]

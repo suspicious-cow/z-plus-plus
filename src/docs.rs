@@ -274,6 +274,7 @@ pub unsafe fn activate(index: usize) {
     if index >= count() {
         return;
     }
+    crate::minibar::hide();
     let old = app(|a| a.edit.get());
     let new = edit_of(index);
     app(|a| {

@@ -18,6 +18,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - Syntax highlighting for 24 languages, picked from the file name: Batch, C, C#, C++, CSS, Diff, Go, HTML, INI, Java, JavaScript, JSON, Lua, Makefile, Markdown, PowerShell, Python, Rust, Shell, SQL, TOML, TypeScript, XML and YAML. The Language menu switches a tab to another language or to plain text. Code colors follow the theme.
 - Find in Files (Ctrl+Shift+F): search a folder and its subfolders, with a file filter such as `*.rs;*.toml`. Version control, dependency and build folders (`.git`, `node_modules`, `target`, `.venv` and similar) are skipped, and so are binary files. The hits fill a panel under the text; double-click one to open the file at that spot. Regular expressions here use [Rust's regex syntax](https://docs.rs/regex/latest/regex/#syntax) (no backreferences or lookaround), which keeps searches fast on big folders.
 - Bold, Italic, and Underline (Format menu, the B, I, and U buttons, or Ctrl+B, Ctrl+I, Ctrl+U) in Markdown files. Since Markdown is plain text, they wrap the selection in `**bold**` or `*italic*`, and pressing again takes them off; with only a caret they work on the word under it. Markdown has no underline, so it is saved as the HTML tags `<u>...</u>`, which z++ and many Markdown viewers show underlined; some viewers drop HTML and show the word plain. Other files can't store formatting, so the buttons are dimmed there and Ctrl+U keeps lowercasing the selection.
+- A mini toolbar, like Word's: select text with the mouse and a small bar appears above it without taking the caret. In Markdown it has Bold, Italic, Underline, Strikethrough, Code, Link, Heading, List, and Quote; in other files, Cut, Copy, UPPERCASE, and lowercase. Typing, the arrow keys, scrolling, or moving the pointer away puts it away.
 - Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button) shows a Markdown tab formatted, with larger headings, bold and italic, inline code, underlined links, block quotes, lists, and tables, and you can keep typing in it. z++ does not convert anything: the tab still holds the Markdown and only hides markup such as `**`, `# `, and a link's `](address)` until the caret reaches it, where it shows dimmed so you can edit it. Lines you don't touch keep their exact bytes, so paragraphs are not reflowed, list markers stay as you typed them, and z++ never adds line breaks. Long lines wrap on screen only. Switching back and forth keeps the caret where it was, and Save writes the same `.md`. Tables keep their pipes instead of lining up in columns, and setext headings, reference-style links, and raw HTML show as plain text.
 
   ![Rendered Markdown](docs/screenshots/rendered-markdown.png)
@@ -27,7 +28,7 @@ The project is early. See [CHANGELOG.md](CHANGELOG.md) for what has landed.
 - Files keep their encoding (UTF-8, UTF-8 with BOM, UTF-16 LE or ANSI) and their LF line endings unless you change them. z++ refuses to open a file it could not save back unchanged, such as a binary file, instead of damaging it.
 - 32 color themes, including all 22 that ship with Notepad++, plus your own text and background colors. Point at a theme in View > Theme or in the toolbar's theme list and the whole window shows it right away; move off it or press Escape to go back. Dark themes also darken the title bar, menus and scroll bars.
 - 11 open-licensed monospace fonts built into the exe, the usual Windows monospace fonts, and any font installed on the machine.
-- A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, find, font, size, colors, theme, word wrap, and rendered Markdown. View > Toolbar and View > Status Bar hide those bars.
+- A toolbar under the menu bar, grouped like the Home tab in Office: file commands, clipboard, find, font, size, colors, theme, word wrap, and rendered Markdown. Each group's icons have their own color, picked per theme to stay readable (Green Screen and High Contrast keep one color). View > Toolbar and View > Status Bar hide those bars.
 - Settings are saved per user under `HKCU\Software\z++`.
 
 | Solarized Light with Fira Mono | Nord with JetBrains Mono |
@@ -128,6 +129,7 @@ Run the tests with `cargo test`.
 | [src/docs.rs](src/docs.rs) | Open files: tabs, open, save, close, reload, recent files, session |
 | [src/session.rs](src/session.rs) | The saved tab list and the backup files that keep unsaved edits between runs |
 | [src/toolbar.rs](src/toolbar.rs) | The toolbar, drawn in the current theme's colors |
+| [src/minibar.rs](src/minibar.rs) | The mini toolbar over a mouse selection |
 | [src/format.rs](src/format.rs) | Bold, Italic, and Underline as Markdown markup |
 | [src/tabs.rs](src/tabs.rs) | The tab strip: selection, dragging, and the right-click menu |
 | [src/statusbar.rs](src/statusbar.rs) | The status bar |

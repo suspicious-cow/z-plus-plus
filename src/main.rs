@@ -14,6 +14,7 @@ mod gdi;
 mod languages;
 mod mdview;
 mod menu;
+mod minibar;
 mod prefs;
 mod profile;
 mod results;

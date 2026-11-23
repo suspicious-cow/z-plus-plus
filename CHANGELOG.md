@@ -6,6 +6,8 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- A mini toolbar over mouse selections, like Word's, that never takes focus. Markdown: Bold, Italic, Underline, Strikethrough, Code, Link (`[text](url)` with `url` selected), Heading, List, and Quote. Other files: Cut, Copy, UPPERCASE, lowercase. Typing, keyboard selection, scrolling, switching tabs, or moving the pointer away hides it.
+- Toolbar icons are colored by group (file, undo, clipboard, find, format, view), each checked for 4.5:1 contrast on every theme; Green Screen and High Contrast stay one color.
 - Bold, Italic, and Underline for Markdown files: Format menu, B, I, and U buttons in the toolbar's Font group, and Ctrl+B, Ctrl+I, Ctrl+U. They wrap the selection (or the word at the caret) in `**`, `*`, or `<u>...</u>` (Markdown has no underline), toggle off when pressed again, and nest bold with italic as `***`. Each is one undo step. In other files the buttons are dimmed and Ctrl+U still lowercases.
 - Tab control: drag a tab to move it; Ctrl+click and Shift+click select several tabs and a drag moves them together. Right-click a tab for Close (Close N Tabs for a selection), Close Others, and Close Tabs to the Right; unsaved tabs still ask, and Cancel stops the rest. Ctrl+Shift+PgUp and Ctrl+Shift+PgDn (View > Move Tab Left, Right) move the selected tabs one place. The saved session follows the new order.
 - Rendered Markdown (View > Rendered Markdown, Ctrl+Shift+M, or the Rendered button on the toolbar): a Markdown tab shows its text formatted and stays editable. Markup is hidden until the caret is inside it, and nothing is converted, so text you don't edit keeps its exact bytes and Save writes the same file.
@@ -48,6 +50,8 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- A mini toolbar over mouse selections, like Word's, that never takes focus. Markdown: Bold, Italic, Underline, Strikethrough, Code, Link (`[text](url)` with `url` selected), Heading, List, and Quote. Other files: Cut, Copy, UPPERCASE, lowercase. Typing, keyboard selection, scrolling, switching tabs, or moving the pointer away hides it.
+- Toolbar icons are colored by group (file, undo, clipboard, find, format, view), each checked for 4.5:1 contrast on every theme; Green Screen and High Contrast stay one color.
 - Bold, Italic, and Underline for Markdown files: Format menu, B, I, and U buttons in the toolbar's Font group, and Ctrl+B, Ctrl+I, Ctrl+U. They wrap the selection (or the word at the caret) in `**`, `*`, or `<u>...</u>` (Markdown has no underline), toggle off when pressed again, and nest bold with italic as `***`. Each is one undo step. In other files the buttons are dimmed and Ctrl+U still lowercases.
 - Tab control: drag a tab to move it; Ctrl+click and Shift+click select several tabs and a drag moves them together. Right-click a tab for Close (Close N Tabs for a selection), Close Others, and Close Tabs to the Right; unsaved tabs still ask, and Cancel stops the rest. Ctrl+Shift+PgUp and Ctrl+Shift+PgDn (View > Move Tab Left, Right) move the selected tabs one place. The saved session follows the new order.
 - 13 color themes and a Custom theme with your own text and background colors.
@@ -62,6 +66,8 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Added
 
+- A mini toolbar over mouse selections, like Word's, that never takes focus. Markdown: Bold, Italic, Underline, Strikethrough, Code, Link (`[text](url)` with `url` selected), Heading, List, and Quote. Other files: Cut, Copy, UPPERCASE, lowercase. Typing, keyboard selection, scrolling, switching tabs, or moving the pointer away hides it.
+- Toolbar icons are colored by group (file, undo, clipboard, find, format, view), each checked for 4.5:1 contrast on every theme; Green Screen and High Contrast stay one color.
 - Bold, Italic, and Underline for Markdown files: Format menu, B, I, and U buttons in the toolbar's Font group, and Ctrl+B, Ctrl+I, Ctrl+U. They wrap the selection (or the word at the caret) in `**`, `*`, or `<u>...</u>` (Markdown has no underline), toggle off when pressed again, and nest bold with italic as `***`. Each is one undo step. In other files the buttons are dimmed and Ctrl+U still lowercases.
 - Tab control: drag a tab to move it; Ctrl+click and Shift+click select several tabs and a drag moves them together. Right-click a tab for Close (Close N Tabs for a selection), Close Others, and Close Tabs to the Right; unsaved tabs still ask, and Cancel stops the rest. Ctrl+Shift+PgUp and Ctrl+Shift+PgDn (View > Move Tab Left, Right) move the selected tabs one place. The saved session follows the new order.
 - First version: New, Open, Save, Save As, undo, redo and clipboard commands, word wrap, and a light and dark mode.

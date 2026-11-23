@@ -25,8 +25,8 @@ use crate::menu::*;
 use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors, Syntax};
 use crate::{
-    dialog, editor, find, findfiles, fonts, format, menu, prefs, profile, results, statusbar, tabs,
-    theme, toolbar, wait, wide,
+    dialog, editor, find, findfiles, fonts, format, menu, minibar, prefs, profile, results,
+    statusbar, tabs, theme, toolbar, wait, wide,
 };
 
 pub const APP_NAME: &str = "z++";
@@ -41,6 +41,8 @@ const TENTHS_PER_INCH: u32 = 720;
 /// WM_COPYDATA tag for "open these files", sent by a second z++ to the first one.
 const COPYDATA_OPEN: usize = 0x5A50;
 const WM_APP_OPEN_PENDING: u32 = WM_APP + 5;
+/// GUI checks only (ZPP_TEST): show the mini toolbar for the current selection.
+const WM_APP_TEST_MINIBAR: u32 = WM_APP + 32;
 /// Checks the active tab's file this often, so changes made by another program (an agent, a
 /// build) show up while z++ is in the background.
 const DISK_TIMER_ID: usize = 1;
@@ -371,6 +373,10 @@ unsafe fn message_loop(hwnd: HWND) -> i32 {
         if !in_files.is_null() && IsDialogMessageW(in_files, &msg) != 0 {
             continue;
         }
+        // Any key (typing, Escape, a shortcut) puts the mini toolbar away.
+        if msg.message == WM_KEYDOWN && minibar::is_shown() {
+            minibar::hide();
+        }
         if TranslateAcceleratorW(hwnd, accel, &msg) != 0 {
             continue;
         }
@@ -391,6 +397,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             SetFocus(app(|a| a.edit.get()));
             0
         }
+        WM_ACTIVATE if (wparam & 0xFFFF) as u32 == WA_INACTIVE => {
+            minibar::hide();
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
         WM_ACTIVATE if (wparam & 0xFFFF) as u32 != WA_INACTIVE => {
             PostMessageW(hwnd, WM_APP_OPEN_PENDING, 1, 0);
             DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -410,6 +420,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_COPYDATA => on_copy_data(hwnd, lparam),
+        WM_APP_TEST_MINIBAR => {
+            minibar::show_for_test(app(|a| a.edit.get()), docs::is_active_markdown());
+            0
+        }
         WM_APP_OPEN_PENDING => {
             open_pending(wparam == 1);
             0
@@ -522,6 +536,10 @@ unsafe fn on_notify(lparam: LPARAM) {
             let n = &*(lparam as *const SCNotification);
             if n.updated & sci::SC_UPDATE_SELECTION != 0 {
                 docs::restyle_if_rendered(hdr.hwndFrom);
+                minibar::on_selection_change(hdr.hwndFrom, docs::is_active_markdown());
+            }
+            if n.updated & (sci::SC_UPDATE_V_SCROLL | sci::SC_UPDATE_H_SCROLL) != 0 {
+                minibar::hide();
             }
             if n.updated & (sci::SC_UPDATE_SELECTION | sci::SC_UPDATE_CONTENT) != 0 {
                 docs::update_status();
@@ -874,6 +892,12 @@ unsafe fn paint_look() {
         docs::fit_margin(edit);
     }
     toolbar::set_colors(colors);
+    let theme = app(|a| a.preview.get().unwrap_or(a.theme.get()));
+    toolbar::set_tints(themes::tints(
+        theme,
+        colors,
+        toolbar::tint_background(colors),
+    ));
     tabs::set_colors(colors);
     statusbar::set_colors(colors);
 }

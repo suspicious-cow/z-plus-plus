@@ -101,6 +101,10 @@ pub const SCI_SETREADONLY: u32 = 2171;
 pub const SCI_WORDSTARTPOSITION: u32 = 2266;
 pub const SCI_WORDENDPOSITION: u32 = 2267;
 pub const SCI_LOWERCASE: u32 = 2340;
+pub const SCI_UPPERCASE: u32 = 2341;
+pub const SCI_POINTXFROMPOSITION: u32 = 2164;
+pub const SCI_POINTYFROMPOSITION: u32 = 2165;
+pub const SCI_TEXTHEIGHT: u32 = 2279;
 pub const SCI_GOTOLINE: u32 = 2024;
 pub const SCI_INDICSETSTYLE: u32 = 2080;
 pub const SCI_INDICSETFORE: u32 = 2082;
@@ -167,6 +171,8 @@ pub const SCN_UPDATEUI: u32 = 2007;
 pub const SCN_ZOOM: u32 = 2018;
 pub const SC_UPDATE_CONTENT: i32 = 0x1;
 pub const SC_UPDATE_SELECTION: i32 = 0x2;
+pub const SC_UPDATE_V_SCROLL: i32 = 0x4;
+pub const SC_UPDATE_H_SCROLL: i32 = 0x8;
 
 #[repr(C)]
 pub struct SCNotification {

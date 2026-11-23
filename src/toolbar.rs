@@ -16,7 +16,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::gdi::{draw_frame, draw_text, fill, round_fill, text_width};
 use crate::menu::*;
-use crate::themes::{self, Colors};
+use crate::themes::{self, Colors, Tint};
 use crate::{fonts, wide};
 
 /// Posted to the main window with the new font size in tenths of a point as wparam.
@@ -239,6 +239,7 @@ struct Toolbar {
     is_rendered: Cell<bool>,
     /// Bold, Italic, and Underline only work in Markdown tabs; dimmed elsewhere.
     is_markdown: Cell<bool>,
+    tints: Cell<[u32; 6]>,
     combos: Cell<[HWND; 3]>,
     ui_font: Cell<HFONT>,
     icon_font: Cell<HFONT>,
@@ -265,6 +266,7 @@ thread_local! {
         is_wrap: Cell::new(false),
         is_rendered: Cell::new(false),
         is_markdown: Cell::new(false),
+        tints: Cell::new([0; 6]),
         combos: Cell::new([null_mut(); 3]),
         ui_font: Cell::new(null_mut()),
         icon_font: Cell::new(null_mut()),
@@ -925,7 +927,12 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
     } else {
         colors.fg
     };
-    SetTextColor(hdc, fore);
+    let glyph_color = if is_dimmed {
+        fore
+    } else {
+        tint_of(id).map_or(colors.fg, |i| tb(|t| t.tints.get())[i])
+    };
+    SetTextColor(hdc, glyph_color);
     let (icon_font, small_icon_font, ui_font) =
         tb(|t| (t.icon_font.get(), t.small_icon_font.get(), t.ui_font.get()));
     let glyph_text = [glyph];
@@ -938,6 +945,7 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
             bottom: rect.top + s(34),
         };
         draw_text(hdc, icon_font, &glyph_text, &mut icon, flags);
+        SetTextColor(hdc, fore);
         let mut text = RECT {
             left: rect.left,
             top: rect.top + s(36),
@@ -960,6 +968,7 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
         bottom: rect.bottom,
     };
     draw_text(hdc, small_icon_font, &glyph_text, &mut icon, flags);
+    SetTextColor(hdc, fore);
     draw_swatch(hdc, id, &icon, colors);
     if !label.is_empty() {
         let mut text = RECT {
@@ -976,6 +985,33 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         );
     }
+}
+
+/// Which entry of themes::TINTS colors a button's glyph; None keeps the text color (the color
+/// buttons, whose swatch already shows a color).
+fn tint_of(id: u16) -> Option<usize> {
+    let tint = match id {
+        IDM_NEW | IDM_OPEN | IDM_SAVE | IDM_SAVE_AS => Tint::File,
+        IDM_UNDO | IDM_REDO => Tint::History,
+        IDM_CUT | IDM_COPY | IDM_PASTE | IDM_SELECT_ALL => Tint::Clipboard,
+        IDM_FIND => Tint::Find,
+        IDM_BOLD | IDM_ITALIC | IDM_UNDERLINE | IDM_FONT_BIGGER | IDM_FONT_SMALLER
+        | IDM_FONT_DIALOG => Tint::Format,
+        IDM_WRAP | IDM_RENDERED | IDM_TOGGLE_DARK => Tint::View,
+        _ => return None,
+    };
+    themes::TINTS.iter().position(|&t| t == tint)
+}
+
+/// The background the glyph colors must read on: a hovered button, the strictest case.
+pub fn tint_background(colors: Colors) -> u32 {
+    themes::mix(colors.bg, colors.fg, HOT_MIX)
+}
+
+/// Glyph colors per button group, from themes::tints.
+pub unsafe fn set_tints(tints: [u32; 6]) {
+    tb(|t| t.tints.set(tints));
+    InvalidateRect(tb(|t| t.hwnd.get()), null(), 0);
 }
 
 /// The color buttons show the current text or background color under the icon.

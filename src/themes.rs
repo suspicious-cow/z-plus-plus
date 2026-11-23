@@ -214,6 +214,46 @@ fn hsl(h: f32, s: f32, l: f32) -> u32 {
     rgb(byte(r), byte(g), byte(b))
 }
 
+/// Toolbar button groups, each with its own glyph color.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tint {
+    File,
+    History,
+    Clipboard,
+    Find,
+    Format,
+    View,
+}
+
+pub const TINTS: [Tint; 6] = [
+    Tint::File,
+    Tint::History,
+    Tint::Clipboard,
+    Tint::Find,
+    Tint::Format,
+    Tint::View,
+];
+
+fn tint_hue(tint: Tint) -> f32 {
+    match tint {
+        Tint::File => 212.0,
+        Tint::History => 35.0,
+        Tint::Clipboard => 140.0,
+        Tint::Find => 275.0,
+        Tint::Format => 190.0,
+        Tint::View => 330.0,
+    }
+}
+
+/// Glyph colors for the toolbar groups, in `TINTS` order, each readable (4.5:1) on `bg`. The
+/// one-color themes keep every glyph in the text color.
+pub fn tints(theme: usize, colors: Colors, bg: u32) -> [u32; 6] {
+    if MONOCHROME.contains(&name_of(theme)) {
+        return [colors.fg; 6];
+    }
+    TINTS.map(|t| readable(tint_hue(t), bg))
+}
+
 /// WCAG contrast ratio between two colors, 1 to 21.
 fn contrast(a: u32, b: u32) -> f32 {
     let (la, lb) = (luminance(a), luminance(b));
@@ -272,6 +312,25 @@ fn channels(c: u32) -> (u32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolbar_tints_read_well_on_every_theme() {
+        for (i, preset) in PRESETS.iter().enumerate() {
+            let bg = mix(preset.colors.bg, preset.colors.fg, 16);
+            let tints = tints(i, preset.colors, bg);
+            if MONOCHROME.contains(&preset.name) {
+                assert!(
+                    tints.iter().all(|&c| c == preset.colors.fg),
+                    "{}",
+                    preset.name
+                );
+                continue;
+            }
+            for c in tints {
+                assert!(contrast(c, bg) >= MIN_CONTRAST, "{}: {c:06x}", preset.name);
+            }
+        }
+    }
 
     #[test]
     fn darkness() {
