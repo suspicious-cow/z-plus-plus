@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod ask;
+mod color;
 mod dialog;
 mod diff;
 mod docs;

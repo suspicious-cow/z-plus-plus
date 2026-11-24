@@ -25,11 +25,14 @@ use crate::menu::*;
 use crate::sci::{self, SCNotification};
 use crate::themes::{self, Colors, Syntax};
 use crate::{
-    dialog, editor, find, findfiles, fonts, format, menu, minibar, prefs, profile, results,
+    color, dialog, editor, find, findfiles, fonts, format, menu, minibar, prefs, profile, results,
     statusbar, tabs, theme, toolbar, wait, wide,
 };
 
 pub const APP_NAME: &str = "z++";
+/// Word's defaults: dark red text, yellow highlight.
+const DEFAULT_TEXT_PEN: u32 = themes::hex(0xC00000);
+const DEFAULT_HIGHLIGHT_PEN: u32 = themes::hex(0xFFFF00);
 /// Resource ID of the icon in build.rs's .rc file.
 const APP_ICON_ID: usize = 1;
 const DEFAULT_WIDTH: i32 = 1100;
@@ -86,6 +89,9 @@ pub struct App {
     pub is_remember_unsaved: Cell<bool>,
     font_list: RefCell<Vec<String>>,
     custom_colors: RefCell<[u32; 16]>,
+    /// The last text color and highlight given to selected text (Format menu).
+    text_pen: Cell<u32>,
+    highlight_pen: Cell<u32>,
     paint: RefCell<Option<theme::Paint>>,
     /// The theme shown while the user browses the Theme menu or dropdown, before choosing.
     preview: Cell<Option<usize>>,
@@ -120,6 +126,8 @@ thread_local! {
         is_remember_unsaved: Cell::new(true),
         font_list: RefCell::new(Vec::new()),
         custom_colors: RefCell::new([0x00FF_FFFF; 16]),
+        text_pen: Cell::new(DEFAULT_TEXT_PEN),
+        highlight_pen: Cell::new(DEFAULT_HIGHLIGHT_PEN),
         paint: RefCell::new(None),
         preview: Cell::new(None),
     };
@@ -135,6 +143,26 @@ fn colors() -> Colors {
         let theme = a.preview.get().unwrap_or(a.theme.get());
         themes::colors_of(theme, a.custom.get())
     })
+}
+
+/// The theme the window itself is drawn in (toolbar, tabs, menus, status bar, dialogs). The
+/// Custom theme colors only the editor, so the window keeps Light or Dark to match it.
+fn chrome_theme() -> usize {
+    let (theme, custom) = app(|a| (a.preview.get().unwrap_or(a.theme.get()), a.custom.get()));
+    if theme < themes::PRESETS.len() {
+        return theme;
+    }
+    let base = if themes::is_dark(custom.bg) {
+        themes::DARK
+    } else {
+        themes::LIGHT
+    };
+    theme_or(base, themes::LIGHT)
+}
+
+/// The window's own colors; see chrome_theme.
+pub fn chrome_colors() -> Colors {
+    themes::colors_of(chrome_theme(), app(|a| a.custom.get()))
 }
 
 /// Colors, code colors, font face and size (tenths of a point) for styling an editor.
@@ -169,7 +197,7 @@ pub unsafe fn run(paths: Vec<PathBuf>, is_new_window: bool, is_wait: bool) -> i3
     fonts::register_bundled();
     let windows_fonts = fonts::windows_fonts();
     load_prefs(&windows_fonts);
-    theme::set_app_mode(themes::is_dark(colors().bg));
+    theme::set_app_mode(themes::is_dark(chrome_colors().bg));
     let menus = menu::build(&windows_fonts);
     app(|a| a.menus.set(menus));
     let Some(hwnd) = create_main_window(hinst, menus.bar) else {
@@ -493,7 +521,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             PostQuitMessage(0);
             0
         }
-        theme::WM_UAHDRAWMENU | theme::WM_UAHDRAWMENUITEM if themes::is_dark(colors().bg) => {
+        theme::WM_UAHDRAWMENU | theme::WM_UAHDRAWMENUITEM
+            if themes::is_dark(chrome_colors().bg) =>
+        {
             app(|a| {
                 let paint = a.paint.borrow();
                 let Some(paint) = paint.as_ref() else { return };
@@ -507,7 +537,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_NCPAINT | WM_NCACTIVATE => {
             let result = DefWindowProcW(hwnd, msg, wparam, lparam);
-            if themes::is_dark(colors().bg) {
+            if themes::is_dark(chrome_colors().bg) {
                 app(|a| {
                     if let Some(paint) = a.paint.borrow().as_ref() {
                         theme::paint_menu_underline(hwnd, paint);
@@ -540,6 +570,11 @@ unsafe fn on_notify(lparam: LPARAM) {
             }
             if n.updated & (sci::SC_UPDATE_V_SCROLL | sci::SC_UPDATE_H_SCROLL) != 0 {
                 minibar::hide();
+            }
+            // Only after a real text change: painting changes indicators, which Scintilla also
+            // reports as content, so painting on every content update would never stop.
+            if n.updated & sci::SC_UPDATE_CONTENT != 0 && docs::take_colors_stale() {
+                docs::paint_colors(docs::active_index());
             }
             if n.updated & (sci::SC_UPDATE_SELECTION | sci::SC_UPDATE_CONTENT) != 0 {
                 docs::update_status();
@@ -625,6 +660,7 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if lparam != 0 {
         if code == EN_CHANGE {
             docs::on_edit_change(lparam as HWND);
+            docs::mark_colors_stale();
         }
         return 0;
     }
@@ -683,6 +719,9 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_TOGGLE_DARK => toggle_dark(),
         IDM_TEXT_COLOR => pick_color(true),
         IDM_BACK_COLOR => pick_color(false),
+        IDM_FONT_COLOR => pick_pen(color::Kind::Text),
+        IDM_HIGHLIGHT => pick_pen(color::Kind::Highlight),
+        IDM_REMOVE_COLOR => docs::remove_color(),
         IDM_TOOLBAR => toggle_bar(true),
         IDM_STATUS_BAR => toggle_bar(false),
         IDM_LINE_NUMBERS => toggle_line_numbers(),
@@ -690,6 +729,7 @@ unsafe fn on_command(hwnd: HWND, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         IDM_BOLD => docs::format_selection(format::Style::Bold),
         IDM_ITALIC => docs::format_selection(format::Style::Italic),
         IDM_UNDERLINE => docs::format_selection(format::Style::Underline),
+        IDM_CTRL_U => docs::ctrl_u(),
         IDM_MOVE_TAB_LEFT => docs::move_selected(-1),
         IDM_MOVE_TAB_RIGHT => docs::move_selected(1),
         IDM_FONT_DIALOG => font_dialog(),
@@ -867,7 +907,8 @@ unsafe fn paint_look() {
         a.look_gen.set(gen);
         (a.main.get(), a.edit.get(), gen)
     });
-    let paint = theme::Paint::new(colors);
+    let (chrome_theme, chrome) = (chrome_theme(), chrome_colors());
+    let paint = theme::Paint::new(chrome);
     app(|a| *a.paint.borrow_mut() = Some(paint));
     let look = theme::Look {
         colors,
@@ -875,13 +916,21 @@ unsafe fn paint_look() {
         face: &face,
         size_tenths: size,
     };
-    theme::apply(main, edit, &look, language);
+    theme::apply(main, edit, &look, language, chrome);
     if !edit.is_null() {
         docs::style_rendered(docs::active_index(), &look);
+        docs::paint_colors(docs::active_index());
     }
     if !results::panel().is_null() {
-        theme::style_editor(results::panel(), &look, None);
-        results::apply_syntax(&syntax);
+        let chrome_syntax = themes::syntax_of(chrome_theme, chrome);
+        let results_look = theme::Look {
+            colors: chrome,
+            syntax: chrome_syntax,
+            face: &face,
+            size_tenths: size,
+        };
+        theme::style_editor(results::panel(), &results_look, None);
+        results::apply_syntax(&chrome_syntax);
     }
     app(|a| {
         if let Some(doc) = a.docs.borrow_mut().get_mut(a.active.get()) {
@@ -891,15 +940,14 @@ unsafe fn paint_look() {
     if !edit.is_null() {
         docs::fit_margin(edit);
     }
-    toolbar::set_colors(colors);
-    let theme = app(|a| a.preview.get().unwrap_or(a.theme.get()));
+    toolbar::set_colors(chrome);
     toolbar::set_tints(themes::tints(
-        theme,
-        colors,
-        toolbar::tint_background(colors),
+        chrome_theme,
+        chrome,
+        toolbar::tint_background(chrome),
     ));
-    tabs::set_colors(colors);
-    statusbar::set_colors(colors);
+    tabs::set_colors(chrome);
+    statusbar::set_colors(chrome);
 }
 
 /// Hovering a theme in View > Theme previews it; hovering anything else restores the theme.
@@ -950,8 +998,9 @@ pub unsafe fn sync_menu_checks() {
     let is_results_shown = results::is_shown();
     let is_rendered = docs::is_rendered(docs::active_index());
     let is_markdown = docs::is_active_markdown();
+    let is_colorable = docs::is_active_colorable();
     toolbar::set_rendered(is_rendered);
-    toolbar::set_markdown(is_markdown);
+    toolbar::set_format(is_markdown, is_colorable);
     app(|a| {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();
@@ -969,6 +1018,7 @@ pub unsafe fn sync_menu_checks() {
                 is_results: is_results_shown,
                 is_rendered,
                 is_markdown,
+                is_colorable,
                 format,
                 language,
             },
@@ -978,10 +1028,11 @@ pub unsafe fn sync_menu_checks() {
 
 unsafe fn sync_controls() {
     sync_menu_checks();
-    let colors = colors();
+    let colors = chrome_colors();
     app(|a| {
         let font_list = a.font_list.borrow();
         let face = a.face.borrow();
+        toolbar::set_pens(a.text_pen.get(), a.highlight_pen.get());
         toolbar::sync(&toolbar::State {
             colors,
             custom: a.custom.get(),
@@ -1059,6 +1110,46 @@ unsafe fn pick_color(is_text: bool) {
         a.custom.set(picked);
     });
     set_theme(themes::PRESETS.len());
+}
+
+/// Format > Text Color and Highlight Color: picks a color for the selected text, starting from
+/// the one used last. Only Markdown and HTML can store it.
+unsafe fn pick_pen(kind: color::Kind) {
+    if !docs::is_active_colorable() {
+        statusbar::set_message(
+            "Text color and highlight are for Markdown and HTML files: this file type can't store them",
+        );
+        docs::update_status();
+        return;
+    }
+    if !docs::has_color_target() {
+        statusbar::set_message("Select the text to color first");
+        docs::update_status();
+        return;
+    }
+    let pen = app(|a| match kind {
+        color::Kind::Text => a.text_pen.get(),
+        color::Kind::Highlight => a.highlight_pen.get(),
+    });
+    let mut custom_colors = app(|a| *a.custom_colors.borrow());
+    let mut cc: CHOOSECOLORW = zeroed();
+    cc.lStructSize = size_of::<CHOOSECOLORW>() as u32;
+    cc.hwndOwner = app(|a| a.main.get());
+    cc.rgbResult = pen;
+    cc.lpCustColors = custom_colors.as_mut_ptr();
+    cc.Flags = CC_RGBINIT | CC_FULLOPEN | CC_ANYCOLOR;
+    if ChooseColorW(&mut cc) == 0 {
+        return;
+    }
+    app(|a| {
+        *a.custom_colors.borrow_mut() = custom_colors;
+        match kind {
+            color::Kind::Text => a.text_pen.set(cc.rgbResult),
+            color::Kind::Highlight => a.highlight_pen.set(cc.rgbResult),
+        }
+    });
+    docs::color_selection(kind, cc.rgbResult);
+    sync_controls();
 }
 
 unsafe fn set_face(face: String) {

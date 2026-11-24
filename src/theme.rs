@@ -128,8 +128,16 @@ pub unsafe fn set_app_mode(is_dark: bool) {
     }
 }
 
-pub unsafe fn apply(main: HWND, edit: HWND, look: &Look, language: Option<&Language>) {
-    let is_dark = themes::is_dark(look.colors.bg);
+/// Styles the active editor in `look` and the window frame and menus in `chrome`, the window's
+/// own colors, which an editor-only Custom theme does not change.
+pub unsafe fn apply(
+    main: HWND,
+    edit: HWND,
+    look: &Look,
+    language: Option<&Language>,
+    chrome: themes::Colors,
+) {
+    let is_dark = themes::is_dark(chrome.bg);
     set_app_mode(is_dark);
     let flag: i32 = is_dark as i32;
     DwmSetWindowAttribute(

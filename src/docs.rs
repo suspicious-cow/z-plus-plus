@@ -16,12 +16,13 @@ use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
 use crate::{
-    ask, diff, editor, format, mdview, menu, prefs, profile, sci, session, statusbar, tabs, theme,
-    wait,
+    ask, color, diff, editor, format, mdview, menu, prefs, profile, sci, session, statusbar, tabs,
+    theme, wait,
 };
 
 const UNTITLED: &str = "Untitled";
 const MARKDOWN: &str = "Markdown";
+const HTML: &str = "HTML";
 const PATH_BUF_LEN: usize = 64 * 1024;
 const FILE_FILTER: &str = "All files\0*.*\0Text files\0*.txt\0\0";
 
@@ -100,6 +101,7 @@ pub unsafe fn set_language(index: usize, language: Option<usize>) {
         editor::set_wrap(edit, app(|a| a.is_wrap.get()));
     }
     style_if_stale(index);
+    paint_colors(index);
     refresh();
 }
 
@@ -127,22 +129,93 @@ pub fn lexer_language(index: usize) -> Option<&'static Language> {
 }
 
 /// Format > Bold, Italic, Underline: Markdown markup around the selection. Other files are
-/// plain text and can't hold formatting; there Ctrl+U keeps its old job, lowercase.
+/// plain text and can't hold formatting, so there they change nothing.
 pub unsafe fn format_selection(style: format::Style) {
     let edit = app(|a| a.edit.get());
     if is_active_markdown() {
         format::apply(edit, style);
         return;
     }
-    if style == format::Style::Underline {
-        SendMessageW(edit, sci::SCI_LOWERCASE, 0, 0);
-        return;
-    }
     statusbar::set_message(
-        "Bold, italic, and underline are for Markdown files: plain text can't store them",
+        "Bold, italic, and underline are for Markdown files: this file type can't store them",
     );
     update_status();
 }
+
+/// The Ctrl+U key: underline in Markdown; elsewhere its Notepad++ job, lowercase.
+pub unsafe fn ctrl_u() {
+    if is_active_markdown() {
+        format_selection(format::Style::Underline);
+        return;
+    }
+    SendMessageW(app(|a| a.edit.get()), sci::SCI_LOWERCASE, 0, 0);
+}
+/// Markdown and HTML can store text color and highlight (color.rs); other files can't.
+fn can_color(language: Option<&Language>) -> bool {
+    language.is_some_and(|l| l.name == MARKDOWN || l.name == HTML)
+}
+
+pub fn is_active_colorable() -> bool {
+    can_color(language_of(active_index()))
+}
+
+thread_local! {
+    /// The text changed (EN_CHANGE) since the colors were last painted.
+    static ARE_COLORS_STALE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn mark_colors_stale() {
+    ARE_COLORS_STALE.with(|s| s.set(true));
+}
+
+/// Whether the text changed since the last paint; clears the mark.
+pub fn take_colors_stale() -> bool {
+    ARE_COLORS_STALE.with(|s| s.replace(false))
+}
+
+/// Shows the colors and underlines stored in tab `index`'s text, or clears them if its file
+/// type can't hold them.
+pub unsafe fn paint_colors(index: usize) {
+    if index >= count() {
+        return;
+    }
+    let fg = window::look_parts().0.fg;
+    color::paint(edit_of(index), can_color(language_of(index)), fg);
+}
+
+/// Format > Text Color and Highlight Color: colors the selection in Markdown and HTML tabs.
+pub unsafe fn color_selection(kind: color::Kind, value: u32) {
+    let edit = app(|a| a.edit.get());
+    let (text, from, to, word) = format::selection_and_word(edit);
+    match color::apply(&text, from, to, word, kind, value) {
+        Some(change) => format::apply_change(edit, &change),
+        None => statusbar::set_message("Select the text to color first"),
+    }
+    paint_colors(active_index());
+    update_status();
+}
+
+/// Whether the color commands have text to work on in the active tab.
+pub unsafe fn has_color_target() -> bool {
+    let (text, from, to, word) = format::selection_and_word(app(|a| a.edit.get()));
+    color::has_target(&text, from, to, word)
+}
+
+/// Format > Remove Color: takes the color or highlight off the text around the caret.
+pub unsafe fn remove_color() {
+    if !is_active_colorable() {
+        return;
+    }
+    let edit = app(|a| a.edit.get());
+    let (text, from, to, word) = format::selection_and_word(edit);
+    match color::remove(&text, from, to, word) {
+        Some(change) => format::apply_change(edit, &change),
+        None => statusbar::set_message("No text color or highlight here"),
+    }
+    paint_colors(active_index());
+    update_status();
+}
+
 /// View > Rendered Markdown: switches the active tab between its Markdown source and the
 /// formatted view. Both edit the same text, and the caret stays where it was.
 pub unsafe fn toggle_rendered() {
@@ -282,6 +355,7 @@ pub unsafe fn activate(index: usize) {
         a.edit.set(new);
     });
     style_if_stale(index);
+    paint_colors(index);
     window::layout();
     ShowWindow(new, SW_SHOW);
     if old != new && !old.is_null() {

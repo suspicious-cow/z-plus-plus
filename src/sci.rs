@@ -114,6 +114,15 @@ pub const SCI_INDICSETOUTLINEALPHA: u32 = 2558;
 pub const SCI_SETINDICATORCURRENT: u32 = 2500;
 pub const SCI_INDICATORFILLRANGE: u32 = 2504;
 pub const INDIC_ROUNDBOX: usize = 7;
+pub const INDIC_PLAIN: usize = 0;
+pub const INDIC_STRAIGHTBOX: usize = 8;
+pub const INDIC_TEXTFORE: usize = 17;
+pub const SCI_INDICSETFLAGS: u32 = 2684;
+pub const SC_INDICFLAG_VALUEFORE: isize = 1;
+pub const SCI_SETINDICATORVALUE: u32 = 2502;
+pub const SCI_INDICATORCLEARRANGE: u32 = 2505;
+/// Set on an indicator value that is a color.
+pub const SC_INDICVALUEBIT: u32 = 0x0100_0000;
 pub const SCN_DOUBLECLICK: u32 = 2006;
 pub const SCI_MARKERSETFORE: u32 = 2041;
 pub const SCI_MARKERSETBACK: u32 = 2042;

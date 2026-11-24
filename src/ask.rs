@@ -129,7 +129,7 @@ pub unsafe fn ask(owner: HWND, q: &Question) -> (i32, bool) {
             ..State::default()
         }
     });
-    COLORS.with(|c| c.set(window::look_parts().0));
+    COLORS.with(|c| c.set(window::chrome_colors()));
     let hwnd = create(owner);
     if hwnd.is_null() {
         return (CANCELED, false);

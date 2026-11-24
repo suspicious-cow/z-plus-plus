@@ -167,8 +167,18 @@ const GROUPS: &[Group] = &[
                 ),
                 small(IDM_FONT_BIGGER, 0xE8E8, "", "Bigger (Ctrl+=)"),
                 small(IDM_FONT_SMALLER, 0xE8E7, "", "Smaller (Ctrl+-)"),
-                small(IDM_TEXT_COLOR, 0xE8D3, "", "Text color"),
-                small(IDM_BACK_COLOR, 0xE790, "", "Background color"),
+                small(
+                    IDM_FONT_COLOR,
+                    0xE8D3,
+                    "",
+                    "Text color for the selection, Markdown and HTML files",
+                ),
+                small(
+                    IDM_HIGHLIGHT,
+                    0xE7E6,
+                    "",
+                    "Highlight for the selection, Markdown and HTML files",
+                ),
                 small(IDM_FONT_DIALOG, 0xE8D2, "More", "Installed fonts"),
             ],
         ],
@@ -239,6 +249,10 @@ struct Toolbar {
     is_rendered: Cell<bool>,
     /// Bold, Italic, and Underline only work in Markdown tabs; dimmed elsewhere.
     is_markdown: Cell<bool>,
+    /// Text color and highlight only work in Markdown and HTML tabs; dimmed elsewhere.
+    is_colorable: Cell<bool>,
+    /// The colors the text color and highlight buttons give, shown under their icons.
+    pens: Cell<(u32, u32)>,
     tints: Cell<[u32; 6]>,
     combos: Cell<[HWND; 3]>,
     ui_font: Cell<HFONT>,
@@ -266,6 +280,8 @@ thread_local! {
         is_wrap: Cell::new(false),
         is_rendered: Cell::new(false),
         is_markdown: Cell::new(false),
+        is_colorable: Cell::new(false),
+        pens: Cell::new((0, 0)),
         tints: Cell::new([0; 6]),
         combos: Cell::new([null_mut(); 3]),
         ui_font: Cell::new(null_mut()),
@@ -559,10 +575,24 @@ pub unsafe fn set_rendered(is_rendered: bool) {
     }
 }
 
-/// Dims Bold, Italic, and Underline unless the active tab is Markdown.
-pub unsafe fn set_markdown(is_markdown: bool) {
-    let (hwnd, was) = tb(|t| (t.hwnd.get(), t.is_markdown.replace(is_markdown)));
-    if was != is_markdown && !hwnd.is_null() {
+/// Dims Bold, Italic, and Underline unless the active tab is Markdown, and the color buttons
+/// unless it is Markdown or HTML.
+pub unsafe fn set_format(is_markdown: bool, is_colorable: bool) {
+    let (hwnd, was) = tb(|t| {
+        let was = (t.is_markdown.get(), t.is_colorable.get());
+        t.is_markdown.set(is_markdown);
+        t.is_colorable.set(is_colorable);
+        (t.hwnd.get(), was)
+    });
+    if was != (is_markdown, is_colorable) && !hwnd.is_null() {
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+/// The text color and highlight the color buttons give the selection.
+pub unsafe fn set_pens(text: u32, highlight: u32) {
+    let (hwnd, was) = tb(|t| (t.hwnd.get(), t.pens.replace((text, highlight))));
+    if was != (text, highlight) && !hwnd.is_null() {
         InvalidateRect(hwnd, null(), 0);
     }
 }
@@ -888,7 +918,7 @@ unsafe fn paint(hwnd: HWND) {
 }
 
 unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
-    let is_markdown = tb(|t| t.is_markdown.get());
+    let (is_markdown, is_colorable) = tb(|t| (t.is_markdown.get(), t.is_colorable.get()));
     let (rect, id, glyph, label, kind, hot, pressed, is_wrap, is_rendered) = tb(|t| {
         let b = &t.buttons.borrow()[index];
         (
@@ -921,7 +951,8 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
         IDM_TOGGLE_DARK => (GLYPH_MOON, "Dark"),
         _ => (glyph, label),
     };
-    let is_dimmed = !is_markdown && matches!(id, IDM_BOLD | IDM_ITALIC | IDM_UNDERLINE);
+    let is_dimmed = (!is_markdown && matches!(id, IDM_BOLD | IDM_ITALIC | IDM_UNDERLINE))
+        || (!is_colorable && matches!(id, IDM_FONT_COLOR | IDM_HIGHLIGHT));
     let fore = if is_dimmed {
         themes::mix(colors.bg, colors.fg, DIMMED_MIX)
     } else {
@@ -969,7 +1000,7 @@ unsafe fn draw_button(hdc: HDC, index: usize, colors: Colors) {
     };
     draw_text(hdc, small_icon_font, &glyph_text, &mut icon, flags);
     SetTextColor(hdc, fore);
-    draw_swatch(hdc, id, &icon, colors);
+    draw_swatch(hdc, id, &icon, colors, is_dimmed);
     if !label.is_empty() {
         let mut text = RECT {
             left: icon.right - s(2),
@@ -1014,12 +1045,19 @@ pub unsafe fn set_tints(tints: [u32; 6]) {
     InvalidateRect(tb(|t| t.hwnd.get()), null(), 0);
 }
 
-/// The color buttons show the current text or background color under the icon.
-unsafe fn draw_swatch(hdc: HDC, id: u16, icon: &RECT, colors: Colors) {
-    let color = match id {
-        IDM_TEXT_COLOR => colors.fg,
-        IDM_BACK_COLOR => colors.bg,
+/// The color buttons show the color they give the selection under the icon; dimmed when the
+/// file type can't store it.
+unsafe fn draw_swatch(hdc: HDC, id: u16, icon: &RECT, colors: Colors, is_dimmed: bool) {
+    let (text, highlight) = tb(|t| t.pens.get());
+    let pen = match id {
+        IDM_FONT_COLOR => text,
+        IDM_HIGHLIGHT => highlight,
         _ => return,
+    };
+    let color = if is_dimmed {
+        themes::mix(colors.bg, pen, DIMMED_MIX)
+    } else {
+        pen
     };
     let bar = RECT {
         left: icon.left + s(7),

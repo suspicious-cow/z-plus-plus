@@ -48,6 +48,13 @@ pub const IDM_MOVE_TAB_RIGHT: u16 = 137;
 pub const IDM_BOLD: u16 = 142;
 pub const IDM_ITALIC: u16 = 143;
 pub const IDM_UNDERLINE: u16 = 144;
+/// Colors the selected text (Markdown and HTML); IDM_TEXT_COLOR is the Custom theme's.
+pub const IDM_FONT_COLOR: u16 = 145;
+pub const IDM_HIGHLIGHT: u16 = 146;
+pub const IDM_REMOVE_COLOR: u16 = 147;
+/// The Ctrl+U key: underline in Markdown, lowercase elsewhere (as in Notepad++). The menu item
+/// and toolbar button only underline, so they are dimmed outside Markdown.
+pub const IDM_CTRL_U: u16 = 148;
 pub const IDM_LICENSES: u16 = 140;
 pub const IDM_ABOUT: u16 = 141;
 pub const IDM_ENC_UTF8: u16 = 150;
@@ -108,6 +115,8 @@ pub struct Checks<'a> {
     pub is_rendered: bool,
     /// The active tab is Markdown, so it can be rendered.
     pub is_markdown: bool,
+    /// The active tab is Markdown or HTML, which can store text color.
+    pub is_colorable: bool,
     pub format: Format,
     pub language: Option<usize>,
 }
@@ -195,6 +204,9 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (IDM_BOLD, "B&old\tCtrl+B"),
         (IDM_ITALIC, "&Italic\tCtrl+I"),
         (IDM_UNDERLINE, "&Underline\tCtrl+U"),
+        (IDM_FONT_COLOR, "Text &Color..."),
+        (IDM_HIGHLIGHT, "&Highlight Color..."),
+        (IDM_REMOVE_COLOR, "&Remove Color"),
         SEPARATOR,
         (IDM_FONT_DIALOG, "&Installed Fonts..."),
         SEPARATOR,
@@ -205,12 +217,13 @@ pub unsafe fn build(windows_fonts: &[&str]) -> Menus {
         (IDM_WRAP, "&Word Wrap\tAlt+Z"),
         SEPARATOR,
     ]);
-    insert_submenu(format, 4, font_menu(windows_fonts), "&Font");
-    insert_submenu(format, 13, encoding, "&Encoding");
-    insert_submenu(format, 14, line_endings, "&Line Endings");
+    insert_submenu(format, 7, font_menu(windows_fonts), "&Font");
+    insert_submenu(format, 16, encoding, "&Encoding");
+    insert_submenu(format, 17, line_endings, "&Line Endings");
+    // These two make the Custom theme; they color the editor only, never the window.
     let view = popup(&[
-        (IDM_TEXT_COLOR, "&Text Color..."),
-        (IDM_BACK_COLOR, "&Background Color..."),
+        (IDM_TEXT_COLOR, "Editor &Text Color..."),
+        (IDM_BACK_COLOR, "Editor &Background Color..."),
         SEPARATOR,
         (IDM_TOGGLE_DARK, "Switch &Light/Dark\tCtrl+Shift+D"),
         SEPARATOR,
@@ -350,10 +363,17 @@ pub unsafe fn update_checks(bar: HMENU, c: &Checks) {
         MF_GRAYED
     };
     EnableMenuItem(bar, IDM_RENDERED as u32, MF_BYCOMMAND | enabled);
-    // Underline stays enabled: in other files Ctrl+U keeps its old job, lowercase.
     let markdown_only = if c.is_markdown { MF_ENABLED } else { MF_GRAYED };
-    for id in [IDM_BOLD, IDM_ITALIC] {
+    for id in [IDM_BOLD, IDM_ITALIC, IDM_UNDERLINE] {
         EnableMenuItem(bar, id as u32, MF_BYCOMMAND | markdown_only);
+    }
+    let colorable = if c.is_colorable {
+        MF_ENABLED
+    } else {
+        MF_GRAYED
+    };
+    for id in [IDM_FONT_COLOR, IDM_HIGHLIGHT, IDM_REMOVE_COLOR] {
+        EnableMenuItem(bar, id as u32, MF_BYCOMMAND | colorable);
     }
     let last_theme = theme_id(themes::PRESETS.len());
     CheckMenuRadioItem(
@@ -437,7 +457,7 @@ pub unsafe fn accelerators() -> HACCEL {
         acc(ctrl, b'G' as u16, IDM_GOTO),
         acc(ctrl, b'B' as u16, IDM_BOLD),
         acc(ctrl, b'I' as u16, IDM_ITALIC),
-        acc(ctrl, b'U' as u16, IDM_UNDERLINE),
+        acc(ctrl, b'U' as u16, IDM_CTRL_U),
         acc(ctrl_shift, b'D' as u16, IDM_TOGGLE_DARK),
         acc(alt, b'Z' as u16, IDM_WRAP),
         acc(ctrl_shift, b'M' as u16, IDM_RENDERED),

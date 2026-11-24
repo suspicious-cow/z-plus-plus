@@ -495,6 +495,23 @@ impl Parser<'_> {
         let mut labels = Vec::new();
         let runs = self.scan(range.clone(), &mut flags, &mut marks, &mut labels);
         emphasis(runs, range.start, &mut flags, &mut marks);
+        // Color and underline tags (color.rs paints their text) hide like other markup.
+        let at = range.start;
+        for t in crate::color::tags(&self.text[range.clone()]) {
+            // Tags inside inline code are code, shown as typed.
+            if flags[t.open.start] & CODE != 0 || flags[t.close.start] & CODE != 0 {
+                continue;
+            }
+            let element = at + t.open.start..at + t.close.end;
+            marks.push(Markup {
+                bytes: at + t.open.start..at + t.open.end,
+                element: element.clone(),
+            });
+            marks.push(Markup {
+                bytes: at + t.close.start..at + t.close.end,
+                element,
+            });
+        }
         for (i, f) in flags.iter().enumerate() {
             self.out[range.start + i] = text_style(block, inline_of(*f));
         }

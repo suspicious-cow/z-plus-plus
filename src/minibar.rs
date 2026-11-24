@@ -361,7 +361,7 @@ unsafe fn show() {
     bar(|b| {
         *b.rects.borrow_mut() = rects;
         b.hot.set(None);
-        b.colors.set(window::look_parts().0);
+        b.colors.set(window::chrome_colors());
         b.shown_for.set((span.start, span.end));
     });
     let text: Vec<u16> = tools_text(&tools)

@@ -164,7 +164,7 @@ pub fn toggle_prefix(text: &[u8], from: usize, to: usize, prefix: &str) -> Chang
 }
 
 /// The text, the selection, and the word around the caret.
-unsafe fn selection_and_word(edit: HWND) -> (Vec<u8>, usize, usize, (usize, usize)) {
+pub unsafe fn selection_and_word(edit: HWND) -> (Vec<u8>, usize, usize, (usize, usize)) {
     let text = editor::utf8(edit);
     let span = editor::selection(edit);
     let caret = span.start.max(0) as usize;
@@ -176,7 +176,7 @@ unsafe fn selection_and_word(edit: HWND) -> (Vec<u8>, usize, usize, (usize, usiz
     (text, from, to, word)
 }
 
-unsafe fn apply_change(edit: HWND, change: &Change) {
+pub unsafe fn apply_change(edit: HWND, change: &Change) {
     editor::begin_undo(edit);
     editor::replace_range(edit, change.start, change.end, &change.with);
     editor::end_undo(edit);
