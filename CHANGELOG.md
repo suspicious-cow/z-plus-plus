@@ -6,6 +6,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 
 ### Fixed
 
+- The "changed on disk" dialog could open off screen while z++ was minimized, leaving z++ disabled behind it and looking frozen. The dialog now waits until z++ is restored and in front, centers on the z++ window (nudged only to stay on its monitor), and comes to the front. It is short, with two large buttons: Reload (the default, Enter) and Keep current, or Reload (lose my edits) and Keep mine (the default) when the tab has unsaved edits. A long file name is shortened so the buttons always show. Message boxes also restore a minimized z++ first.
 - Picking a text or background color colored the whole window, toolbar, tabs, and status bar included. Those colors (now View > Editor Text Color and Editor Background Color, the Custom theme) change only the editor; the window keeps Light or Dark to match.
 
 ### Added
@@ -19,7 +20,7 @@ Notable changes to z++. The format follows [Keep a Changelog](https://keepachang
 - Find in Files (Ctrl+Shift+F) with a file filter, match case, whole word and regular expressions. It searches on a background thread, skips build and dependency folders and binary files, and lists hits in a panel under the text; double-click a hit to open it. View > Search Results hides the panel.
 - `zpp file:42` and `zpp file:42:7` open a file at a line and column, the form compilers and coding agents print.
 - `zpp --wait` returns only once the file's tab is closed, so z++ can be the editor for git and other tools.
-- When another program changes or deletes an open file, z++ asks in a modal dialog drawn in its own colors: Reload from disk, Keep my version, or Compare (a read-only diff tab, then it asks again). A deleted file offers Keep it open, Save it again, or Close the tab. Each change is asked about once; in the background z++ flashes its taskbar button and asks when you return. A check box lets a file with no unsaved edits reload without asking from then on.
+- When another program changes or deletes an open file, z++ asks in a modal dialog drawn in its own colors, centered on its window. A deleted file offers Keep it open, Save it again, or Close the tab. Each change is asked about once; in the background z++ flashes its taskbar button and asks when you return.
 - A reload replaces only the lines that differ, so the caret and scroll position stay put and Undo goes back. A margin marks changed lines.
 - `ZPP_PROFILE=<name>` runs z++ with its own settings and its own window, separate from your everyday z++. The GUI tests use it, so they never touch your settings or open files.
 - Syntax highlighting for 24 languages, chosen by file name, with a Language menu to switch a tab to another language or plain text. Each theme colors code its own way: the Notepad++ themes use their own code colors, and the rest get colors computed to stay readable on their background.

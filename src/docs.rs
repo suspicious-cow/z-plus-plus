@@ -16,8 +16,8 @@ use crate::file::{self, Encoding, Format, Stamp};
 use crate::languages::{self, Language};
 use crate::window::{self, app, ask_yes_no_cancel, error_box, info_box, Answer};
 use crate::{
-    ask, color, diff, editor, format, mdview, menu, prefs, profile, sci, session, statusbar, tabs,
-    theme, wait,
+    ask, color, editor, format, mdview, menu, prefs, profile, sci, session, statusbar, tabs, theme,
+    wait,
 };
 
 const UNTITLED: &str = "Untitled";
@@ -41,8 +41,6 @@ pub struct Doc {
     is_known_deleted: bool,
     /// The disk state the taskbar button last flashed for, so one change flashes once.
     flashed_for: Option<Option<Stamp>>,
-    /// The user asked to reload this file without asking while the tab has no unsaved edits.
-    is_auto_reload: bool,
     /// Shown on the tab in place of "Untitled N" for a tab with no file, such as a comparison.
     caption: Option<String>,
     /// File in the session's backup folder holding this tab's unsaved text (session.rs).
@@ -326,7 +324,6 @@ pub unsafe fn new_tab() -> usize {
             language: None,
             is_known_deleted: false,
             flashed_for: None,
-            is_auto_reload: false,
             caption: None,
             backup: None,
             is_backup_stale: false,
@@ -908,13 +905,8 @@ unsafe fn check_disk_inner(index: usize) {
         });
         refresh();
     }
-    let is_quiet =
-        now.is_some() && !is_modified(index) && app(|a| a.docs.borrow()[index].is_auto_reload);
-    if is_quiet {
-        set_stamp(index, now);
-        reload(index, &path);
-        return;
-    }
+    // A minimized or background z++ waits: the dialog comes up over the window once the user
+    // is back, never at a minimized window's off-screen position.
     if !can_ask() {
         flash_once(index, now);
         return;
@@ -940,12 +932,14 @@ unsafe fn set_stamp(index: usize, stamp: Option<Stamp>) {
 /// z++ is the window the user is using, with no other dialog of its own open.
 unsafe fn can_ask() -> bool {
     let main = app(|a| a.main.get());
+    if IsIconic(main) != 0 || IsWindowEnabled(main) == 0 {
+        return false;
+    }
     if profile::is_test() {
-        return IsIconic(main) == 0 && IsWindowEnabled(main) != 0;
+        return true;
     }
     let front = GetForegroundWindow();
-    let is_ours = front == main || GetWindow(front, GW_OWNER) == main;
-    is_ours && IsWindowEnabled(main) != 0
+    front == main || GetWindow(front, GW_OWNER) == main
 }
 
 unsafe fn flash_once(index: usize, now: Option<Stamp>) {
@@ -964,96 +958,65 @@ unsafe fn flash_once(index: usize, now: Option<Stamp>) {
 
 const RELOAD: i32 = 100;
 const KEEP: i32 = 101;
-const COMPARE: i32 = 102;
 const SAVE_AGAIN: i32 = 103;
 const CLOSE: i32 = 104;
-const COMPARE_CONTEXT: usize = 3;
 /// Disk checks (about a second apart) a file must be missing before z++ calls it deleted.
 const MISSING_CHECKS: u32 = 3;
+
+/// The words of the "changed on disk" question: (detail, reload label, keep label, default).
+fn changed_choices(has_edits: bool) -> (&'static str, &'static str, &'static str, i32) {
+    if has_edits {
+        (
+            "Another program changed this file, and this tab has unsaved edits.",
+            "Reload (lose my edits)",
+            "Keep mine",
+            KEEP,
+        )
+    } else {
+        (
+            "Another program changed this file.",
+            "Reload",
+            "Keep current",
+            RELOAD,
+        )
+    }
+}
 
 unsafe fn ask_changed(index: usize, path: &Path) {
     let name = app(|a| label(&a.docs.borrow()[index]));
     let shown = path.display().to_string();
     activate(index);
-    loop {
-        let has_edits = is_modified(index);
-        let heading = format!("{name} changed on disk");
-        let detail = if has_edits {
-            "Another program changed this file, and you have unsaved edits in this tab."
-        } else {
-            "Another program changed this file. You have no unsaved edits in this tab."
-        };
-        let reload_note = if has_edits {
-            "Replaces this tab with the file on disk. Your edits are replaced (Undo still has them)."
-        } else {
-            "Shows the new version. The changed lines are marked, and Undo goes back."
-        };
-        let choices = [
-            ask::Choice { id: RELOAD, label: "Reload from disk", note: reload_note },
-            ask::Choice {
-                id: KEEP,
-                label: "Keep my version",
-                note: "The tab stays as it is and counts as unsaved. Saving writes it over the file on disk.",
-            },
-            ask::Choice {
-                id: COMPARE,
-                label: "Compare",
-                note: "Shows the differences in a new tab, then asks again.",
-            },
-        ];
-        let question = ask::Question {
-            heading: &heading,
-            detail,
-            path: &shown,
-            choices: &choices,
-            default: if has_edits { KEEP } else { RELOAD },
-            check: (!has_edits)
-                .then_some("Reload this file without asking while it has no unsaved edits"),
-        };
-        let (chosen, is_checked) = ask::ask(app(|a| a.main.get()), &question);
-        // The comparison tab may be showing; the answer is about this one.
-        if chosen != COMPARE {
-            activate(index);
-        }
-        match chosen {
-            RELOAD if has_edits && !confirm_lose_edits(&name, &shown) => continue,
-            RELOAD => {
-                app(|a| a.docs.borrow_mut()[index].is_auto_reload |= is_checked);
-                reload(index, path);
-            }
-            COMPARE => {
-                open_comparison(index, path);
-                continue;
-            }
-            _ => keep_mine(index),
-        }
-        return;
-    }
-}
-
-unsafe fn confirm_lose_edits(name: &str, shown: &str) -> bool {
-    let heading = format!("Replace your edits to {name}?");
+    let has_edits = is_modified(index);
+    let heading = format!("{name} changed on disk");
+    let (detail, reload_label, keep_label, default) = changed_choices(has_edits);
     let choices = [
         ask::Choice {
             id: RELOAD,
-            label: "Reload and replace my edits",
-            note: "Undo can still bring them back until you close the tab.",
+            label: reload_label,
+            note: "",
         },
         ask::Choice {
             id: KEEP,
-            label: "Go back",
+            label: keep_label,
             note: "",
         },
     ];
     let question = ask::Question {
         heading: &heading,
-        detail: "The tab will show the file on disk instead of your unsaved edits.",
-        path: shown,
+        detail,
+        path: &shown,
         choices: &choices,
-        default: KEEP,
+        default,
         check: None,
     };
-    ask::ask(app(|a| a.main.get()), &question).0 == RELOAD
+    let (chosen, _) = ask::ask(app(|a| a.main.get()), &question);
+    activate(index);
+    // Escape or closing the dialog keeps the tab as it is, the choice that loses nothing.
+    if chosen == RELOAD {
+        reload(index, path);
+    } else {
+        keep_mine(index);
+    }
 }
 
 /// The tab keeps its text and counts as unsaved, so the user sees it differs from the disk.
@@ -1110,40 +1073,6 @@ unsafe fn ask_deleted(index: usize, path: &Path) {
         _ => {}
     }
 }
-/// A read-only tab with a unified diff from this tab's text to the file on disk.
-unsafe fn open_comparison(index: usize, path: &Path) {
-    let name = app(|a| label(&a.docs.borrow()[index]));
-    let mine = lf_text(&editor::text(edit_of(index)));
-    let disk = match read_quietly(path) {
-        Ok((text, _)) => lf_text(&text),
-        Err(why) => {
-            error_box(&why);
-            return;
-        }
-    };
-    let mut text = diff::unified(
-        &mine,
-        &disk,
-        &format!("{name} (this tab)"),
-        &format!("{name} (on disk)"),
-        COMPARE_CONTEXT,
-    );
-    if text.is_empty() {
-        text = format!("{name}: this tab and the file on disk have the same text.\n");
-    }
-    let tab = new_tab();
-    let edit = edit_of(tab);
-    let units: Vec<u16> = text.encode_utf16().collect();
-    editor::set_text(edit, &units, true);
-    SendMessageW(edit, sci::SCI_SETREADONLY, 1, 0);
-    app(|a| a.docs.borrow_mut()[tab].caption = Some(format!("Compare: {name}")));
-    set_language(tab, languages::for_path(Path::new("compare.diff")));
-}
-
-fn lf_text(units: &[u16]) -> String {
-    String::from_utf16_lossy(units).replace("\r\n", "\n")
-}
-
 /// Replaces the tab's text with the file's. False, with the reason in the status bar, if the
 /// file can't be read.
 unsafe fn reload(index: usize, path: &Path) -> bool {
@@ -1475,6 +1404,17 @@ fn parse_selection(buf: &[u16]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_on_disk_buttons_say_what_happens() {
+        let (_, reload, keep, default) = changed_choices(false);
+        assert_eq!((reload, keep, default), ("Reload", "Keep current", RELOAD));
+        let (_, reload, keep, default) = changed_choices(true);
+        assert_eq!(
+            (reload, keep, default),
+            ("Reload (lose my edits)", "Keep mine", KEEP)
+        );
+    }
 
     fn w(s: &str) -> Vec<u16> {
         s.encode_utf16().collect()

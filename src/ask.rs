@@ -31,7 +31,7 @@ const WIDTH: i32 = 500;
 const PAD: i32 = 24;
 const GAP: i32 = 8;
 const ROW_PAD_X: i32 = 14;
-const ROW_PAD_Y: i32 = 9;
+const ROW_PAD_Y: i32 = 12;
 const NOTE_GAP: i32 = 2;
 const BOX: i32 = 15;
 const BOX_GAP: i32 = 8;
@@ -130,12 +130,19 @@ pub unsafe fn ask(owner: HWND, q: &Question) -> (i32, bool) {
         }
     });
     COLORS.with(|c| c.set(window::chrome_colors()));
+    // A minimized owner has a far-off position; the dialog belongs over the restored window.
+    if IsIconic(owner) != 0 && !profile::is_test() {
+        ShowWindow(owner, SW_RESTORE);
+    }
     let hwnd = create(owner);
     if hwnd.is_null() {
         return (CANCELED, false);
     }
     EnableWindow(owner, 0);
     ShowWindow(hwnd, profile::show_cmd());
+    if !profile::is_test() {
+        SetForegroundWindow(hwnd);
+    }
     SetFocus(hwnd);
     let mut msg: MSG = zeroed();
     while state(|st| st.answer.is_none()) {
@@ -172,8 +179,9 @@ unsafe fn create(owner: HWND) -> HWND {
     let width = s(WIDTH);
     let mut rc: RECT = zeroed();
     GetWindowRect(owner, &mut rc);
-    let x = rc.left + (rc.right - rc.left - width) / 2;
-    let y = rc.top + (rc.bottom - rc.top - height) / 3;
+    // Test windows sit off screen on purpose; keep their dialogs with them.
+    let work = (!profile::is_test()).then(|| work_area(owner));
+    let (x, y) = place(&rc, work.as_ref(), width, height);
     let title = wide(&accessible_text());
     let hwnd = CreateWindowExW(
         0,
@@ -199,6 +207,29 @@ unsafe fn create(owner: HWND) -> HWND {
         );
     }
     hwnd
+}
+
+/// The work area (the screen less the taskbar) of the monitor `owner` is on.
+unsafe fn work_area(owner: HWND) -> RECT {
+    let mut info: MONITORINFO = zeroed();
+    info.cbSize = size_of::<MONITORINFO>() as u32;
+    GetMonitorInfoW(
+        MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST),
+        &mut info,
+    );
+    info.rcWork
+}
+
+/// Top-left corner for a `width` x `height` dialog centered on the `owner` window, nudged only
+/// as far as it takes to keep it all inside `work`, the work area of z++'s monitor.
+fn place(owner: &RECT, work: Option<&RECT>, width: i32, height: i32) -> (i32, i32) {
+    let mut x = owner.left + (owner.right - owner.left - width) / 2;
+    let mut y = owner.top + (owner.bottom - owner.top - height) / 2;
+    if let Some(w) = work {
+        x = x.min(w.right - width).max(w.left);
+        y = y.min(w.bottom - height).max(w.top);
+    }
+    (x, y)
 }
 
 /// Everything the dialog says, as its window text, for screen readers and tests.
@@ -280,7 +311,7 @@ unsafe fn row_height(label: &str, note: &str, text_w: i32) -> i32 {
 /// Where the choices start: below the heading, the detail, and the path.
 unsafe fn choices_top(q: &Owned, inner: i32) -> i32 {
     let font = gdi::ui_font();
-    let mut y = s(PAD) + wrapped_height(heading_font(), &q.heading, inner) + s(GAP);
+    let mut y = s(PAD) + wrapped_height(heading_font(), "Ag", inner) + s(GAP);
     y += wrapped_height(font, &q.detail, inner);
     if !q.path.is_empty() {
         y += wrapped_height(font, "Ag", inner);
@@ -473,8 +504,10 @@ unsafe fn draw(mem: HDC, rc: &RECT, colors: Colors) {
     let wrap = DT_WORDBREAK | DT_NOPREFIX;
     let mut y = s(PAD);
     SetTextColor(mem, colors.fg);
-    let h = wrapped_height(heading_font(), &q.heading, inner);
-    gdi::draw_str(mem, heading_font(), &q.heading, &mut line(y, h), wrap);
+    // One line, shortened if need be, so a long file name never pushes the choices down.
+    let h = wrapped_height(heading_font(), "Ag", inner);
+    let one_line = DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
+    gdi::draw_str(mem, heading_font(), &q.heading, &mut line(y, h), one_line);
     y += h + s(GAP);
     let h = wrapped_height(font, &q.detail, inner);
     gdi::draw_str(mem, font, &q.detail, &mut line(y, h), wrap);
@@ -503,7 +536,13 @@ unsafe fn draw(mem: HDC, rc: &RECT, colors: Colors) {
         };
         SetTextColor(mem, colors.fg);
         let label_h = wrapped_height(label_font(), label, at.right - at.left);
-        gdi::draw_str(mem, label_font(), label, &mut at.clone(), wrap);
+        // A choice with no note is a plain button: its label sits in the middle.
+        let label_flags = if note.is_empty() {
+            wrap | DT_CENTER
+        } else {
+            wrap
+        };
+        gdi::draw_str(mem, label_font(), label, &mut at.clone(), label_flags);
         at.top += label_h + s(NOTE_GAP);
         SetTextColor(mem, dim);
         gdi::draw_str(mem, font, note, &mut at, wrap);
@@ -560,4 +599,48 @@ unsafe fn draw_ring(mem: HDC, rc: &RECT, color: u32) {
     SelectObject(mem, old_brush);
     SelectObject(mem, old_pen);
     DeleteObject(pen as HGDIOBJ);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn centered_on_the_window_not_the_screen() {
+        let work = rect(0, 0, 1920, 1040);
+        assert_eq!(
+            place(&rect(100, 100, 900, 700), Some(&work), 400, 200),
+            (300, 300)
+        );
+    }
+
+    #[test]
+    fn nudged_only_back_onto_the_monitor() {
+        let work = rect(0, 0, 1920, 1040);
+        // Hanging off the right and bottom edges.
+        assert_eq!(
+            place(&rect(1700, 900, 2100, 1300), Some(&work), 500, 300),
+            (1420, 740)
+        );
+        // A minimized window's position: pulled to the top-left of the work area.
+        let far = rect(-32000, -32000, -31840, -31972);
+        assert_eq!(place(&far, Some(&work), 500, 300), (0, 0));
+    }
+
+    #[test]
+    fn test_windows_keep_their_dialog_with_them() {
+        assert_eq!(
+            place(&rect(-20000, -20000, -19000, -19200), None, 500, 300),
+            (-19750, -19750)
+        );
+    }
 }

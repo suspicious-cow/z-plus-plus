@@ -1289,6 +1289,11 @@ pub unsafe fn info_box(text: &str) {
 unsafe fn message_box(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
     let text = wide(text);
     let caption = wide(APP_NAME);
+    // A minimized owner would put the box at its far-off position; restore it first.
+    let main = app(|a| a.main.get());
+    if !main.is_null() && IsIconic(main) != 0 && !profile::is_test() {
+        ShowWindow(main, SW_RESTORE);
+    }
     MessageBoxW(
         app(|a| a.main.get()),
         text.as_ptr(),

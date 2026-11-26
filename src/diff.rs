@@ -130,80 +130,9 @@ fn backtrack(trace: &[Vec<isize>], n: usize, m: usize, offset: isize) -> Vec<Hun
     hunks
 }
 
-/// A unified diff (as `diff -u` prints it) from `old` to `new`, with `context` unchanged lines
-/// around each change. Empty when the texts have the same lines.
-pub fn unified(old: &str, new: &str, old_name: &str, new_name: &str, context: usize) -> String {
-    let (a, b) = (lines(old.as_bytes()), lines(new.as_bytes()));
-    let all = hunks(&a, &b);
-    if all.is_empty() {
-        return String::new();
-    }
-    let mut out = format!("--- {old_name}\n+++ {new_name}\n");
-    let mut i = 0;
-    while i < all.len() {
-        let mut j = i;
-        while j + 1 < all.len() && all[j + 1].old_start - all[j].old_end <= 2 * context {
-            j += 1;
-        }
-        let (first, last) = (all[i], all[j]);
-        let old_from = first.old_start.saturating_sub(context);
-        let old_to = (last.old_end + context).min(a.len());
-        let new_from = first.new_start - (first.old_start - old_from);
-        let new_to = last.new_end + (old_to - last.old_end);
-        out.push_str(&format!(
-            "@@ -{} +{} @@\n",
-            range(old_from, old_to),
-            range(new_from, new_to)
-        ));
-        let mut at = old_from;
-        for h in &all[i..=j] {
-            push_lines(&mut out, ' ', &a[at..h.old_start]);
-            push_lines(&mut out, '-', &a[h.old_start..h.old_end]);
-            push_lines(&mut out, '+', &b[h.new_start..h.new_end]);
-            at = h.old_end;
-        }
-        push_lines(&mut out, ' ', &a[at..old_to]);
-        i = j + 1;
-    }
-    out
-}
-
-/// A hunk header's "start,count", 1-based (start is the line before when count is 0).
-fn range(from: usize, to: usize) -> String {
-    let count = to - from;
-    let start = if count == 0 { from } else { from + 1 };
-    format!("{start},{count}")
-}
-
-fn push_lines(out: &mut String, mark: char, lines: &[&[u8]]) {
-    for line in lines {
-        out.push(mark);
-        out.push_str(&String::from_utf8_lossy(line));
-        if !line.ends_with(b"\n") {
-            out.push('\n');
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn unified_diff_matches_diff_u() {
-        let old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n";
-        let new = "1\n2\nthree\n4\n5\n6\n7\n8\n9\n10\neleven\n";
-        assert_eq!(
-            unified(old, new, "mine", "disk", 2),
-            "--- mine\n+++ disk\n@@ -1,5 +1,5 @@\n 1\n 2\n-3\n+three\n 4\n 5\n\
-             @@ -9,2 +9,3 @@\n 9\n 10\n+eleven\n"
-        );
-        // Changes closer than two contexts share one hunk.
-        let near = unified("a\nb\nc\nd\n", "A\nb\nc\nD\n", "x", "y", 1);
-        assert_eq!(near.matches("@@ -").count(), 1);
-        assert_eq!(unified("same\n", "same\n", "x", "y", 3), "");
-        assert!(unified("", "new", "x", "y", 3).contains("@@ -0,0 +1,1 @@\n+new\n"));
-    }
 
     /// Applies the hunks to `old` and checks the result is `new`.
     fn round_trip(old: &str, new: &str) -> Vec<Hunk> {
